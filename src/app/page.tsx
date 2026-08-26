@@ -15,10 +15,12 @@ import {
   Film,
   Video,
 } from "lucide-react";
-import VideoUploader from "@/components/VideoUploader";
-import PipelineVisualizer from "@/components/PipelineVisualizer";
-import TaskTerminal from "@/components/TaskTerminal";
-import PlayerComparison from "@/components/PlayerComparison";
+import {
+  VideoUploader,
+  PipelineVisualizer,
+  TaskTerminal,
+  PlayerComparison,
+} from "@/components";
 import { TaskItem } from "@/lib/store/task-store";
 
 const ACTIVE_TASK_KEY = "active_lipsync_task_id";
