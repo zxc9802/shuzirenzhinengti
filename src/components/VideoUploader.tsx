@@ -10,7 +10,6 @@ import {
   Layers,
   Clock,
   Activity,
-  ArrowUpCircle,
 } from "lucide-react";
 import { formatBytes, formatDuration } from "@/lib/utils";
 
@@ -48,7 +47,7 @@ export default function VideoUploader({
     setUploadProgress(0);
     setUploadSpeedText("准备上传...");
 
-    // Fast local video probe for instant visual feedback
+    // Fast local video probe and blob preview
     const localBlobUrl = URL.createObjectURL(file);
     const tempVideo = document.createElement("video");
     tempVideo.src = localBlobUrl;
@@ -110,6 +109,7 @@ export default function VideoUploader({
 
       const finalData = {
         ...data,
+        previewBlobUrl: localBlobUrl,
         probe: data.probe || {
           ...localProbe,
           fps: 30,
@@ -128,7 +128,6 @@ export default function VideoUploader({
       setError(err.message || "上传异常");
     } finally {
       setUploading(false);
-      URL.revokeObjectURL(localBlobUrl);
     }
   };
 
@@ -198,10 +197,11 @@ export default function VideoUploader({
           <div className="w-full flex flex-col sm:flex-row items-center gap-4 p-4">
             <div className="relative h-28 w-44 shrink-0 overflow-hidden rounded-xl bg-black border border-white/[0.1] shadow-md group/video">
               <video
-                src={uploadedInfo.fileUrl}
+                src={uploadedInfo.previewBlobUrl || `${uploadedInfo.fileUrl}#t=0.001`}
                 className="h-full w-full object-cover"
                 muted
                 playsInline
+                preload="auto"
                 onMouseOver={(e) => (e.currentTarget as HTMLVideoElement).play()}
                 onMouseOut={(e) => (e.currentTarget as HTMLVideoElement).pause()}
               />
