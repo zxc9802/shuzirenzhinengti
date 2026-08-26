@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  digital-human-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: digital_human_studio
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - PUBLIC_BASE_URL=https://lipsync.yourdomain.com
+      - INDEXTTS_302_API_KEY=sk-S7v4U3VrOrsr5tmw0wAIPtsmiaOgUmF1Cx3RRCObrblxQJIx
+      - INDEXTTS_SPEAKER_AUDIO_URL=https://file.302.ai/gpt/imgs/20260819/9312a23901fa7f214037fa88513a64b3.mp3
+      - INDEXTTS_EMOTION_AUDIO_URL=https://file.302.ai/gpt/imgs/20260820/d9b8f707580993f36fe037e7e9540938.wav
+    volumes:
+      - ./data/jobs:/app/public/jobs
+      - ./data/uploads:/app/public/uploads
+      - ./data/.tasks.json:/app/.tasks.json
+      - ./data/.settings.json:/app/.settings.json
