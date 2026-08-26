@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
       toneProfile = "low",
       videoFit = "smart",
       emotionIntensity = 0.8,
+      speakerVoiceId,
+      speakerAudioUrl,
       emotionAudioUrl,
     } = body;
 
@@ -40,6 +42,8 @@ export async function POST(req: NextRequest) {
         toneProfile,
         videoFit,
         emotionIntensity,
+        speakerVoiceId,
+        speakerAudioUrl,
         emotionAudioUrl,
       },
       results: {},

@@ -4,10 +4,15 @@ import path from "path";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ filename: string }> }
+  { params }: { params: Promise<{ slug: string[] }> }
 ) {
-  const { filename } = await params;
-  const filePath = path.join(process.cwd(), "public", "uploads", path.basename(filename));
+  const { slug } = await params;
+  if (!slug || slug.length === 0) {
+    return new NextResponse("Not found", { status: 404 });
+  }
+
+  const safeRelPath = slug.map((s) => path.basename(s)).join(path.sep);
+  const filePath = path.join(process.cwd(), "public", "uploads", safeRelPath);
 
   if (!fs.existsSync(filePath)) {
     return new NextResponse("File not found", { status: 404 });
@@ -24,6 +29,8 @@ export async function GET(
   else if (ext === ".webm") contentType = "video/webm";
   else if (ext === ".wav") contentType = "audio/wav";
   else if (ext === ".mp3") contentType = "audio/mpeg";
+  else if (ext === ".m4a") contentType = "audio/mp4";
+  else if (ext === ".aac") contentType = "audio/aac";
 
   if (range) {
     const parts = range.replace(/bytes=/, "").split("-");

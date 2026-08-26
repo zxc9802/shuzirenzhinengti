@@ -46,9 +46,14 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
 
     // 2. Step: IndexTTS-2 Speech Synthesis
     log("🗣️ 第一步: 正在使用 IndexTTS-2 合成中文定制配音 (根据字数可能需要 1~3 分钟)...");
-    const speakerUrl = config.indexttsSpeakerAudioUrl || "https://example.com/speaker.wav";
+    const speakerUrl =
+      task.inputs.speakerAudioUrl ||
+      config.indexttsSpeakerAudioUrl ||
+      "https://file.302.ai/gpt/imgs/20260819/9312a23901fa7f214037fa88513a64b3.mp3";
     const emotionAudioUrl =
-      task.inputs.emotionAudioUrl || config.indexttsEmotionAudioUrl || undefined;
+      task.inputs.emotionAudioUrl ||
+      config.indexttsEmotionAudioUrl ||
+      "https://file.302.ai/gpt/imgs/20260820/d9b8f707580993f36fe037e7e9540938.wav";
 
     const ttsResult = await generateIndexTTS(task.inputs.scriptText, {
       apiKey: config.indexttsApiKey,

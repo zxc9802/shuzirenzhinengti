@@ -35,6 +35,8 @@ export interface TaskItem {
     toneProfile: "low" | "high";
     videoFit: "smart" | "preserve";
     emotionIntensity: number;
+    speakerVoiceId?: string;
+    speakerAudioUrl?: string;
     emotionAudioUrl?: string;
   };
   results: {
@@ -69,11 +71,10 @@ function reloadFromDisk() {
       }
     }
   } catch (e) {
-    // ignore read error during concurrent write
+    // ignore read error
   }
 }
 
-// Initial load
 reloadFromDisk();
 
 function persistStore() {

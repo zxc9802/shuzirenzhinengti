@@ -20,8 +20,10 @@ import {
   PipelineVisualizer,
   TaskTerminal,
   PlayerComparison,
+  VoiceSelector,
 } from "@/components";
 import { TaskItem } from "@/lib/store/task-store";
+import { VoiceItem } from "@/lib/store/voice-store";
 
 const ACTIVE_TASK_KEY = "active_lipsync_task_id";
 
@@ -37,6 +39,8 @@ export default function StudioPage() {
   const [toneProfile, setToneProfile] = useState<"low" | "high">("low");
   const [videoFit, setVideoFit] = useState<"smart" | "preserve">("smart");
   const [emotionIntensity, setEmotionIntensity] = useState(0.8);
+  const [selectedVoice, setSelectedVoice] = useState<VoiceItem | null>(null);
+
   const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +99,7 @@ export default function StudioPage() {
     restoreTask();
   }, []);
 
-  // 2. Continuous real-time status poller (1.2s interval while active)
+  // 2. Continuous real-time status poller
   useEffect(() => {
     const activeId = currentTask?.id || localStorage.getItem(ACTIVE_TASK_KEY);
     if (!activeId) return;
@@ -155,6 +159,8 @@ export default function StudioPage() {
           toneProfile,
           videoFit,
           emotionIntensity,
+          speakerVoiceId: selectedVoice?.id,
+          speakerAudioUrl: selectedVoice?.audioUrl,
         }),
       });
 
@@ -195,7 +201,7 @@ export default function StudioPage() {
             </span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl leading-relaxed">
-            上传口播视频与文本，通过标准 MCP 协议客户端调度 HeyGen 对口型并无损绑定 IndexTTS-2 中文原声。
+            上传口播视频与文本，选择或上传专属声音库，通过标准 MCP 协议客户端调度 HeyGen 对口型并无损绑定克隆原声。
           </p>
         </div>
 
@@ -252,97 +258,101 @@ export default function StudioPage() {
             />
           </div>
 
-          {/* Card 3: Voice & Fit Options */}
-          <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl space-y-4">
-            <h2 className="text-xs font-bold text-zinc-100 uppercase tracking-wider flex items-center gap-2">
-              <Sliders className="h-4 w-4 text-blue-400" />
-              对口型与音色参数
-            </h2>
+          {/* Card 3: Voice Selection & Fit Options */}
+          <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl space-y-5">
+            {/* Voice Library Selector */}
+            <VoiceSelector
+              selectedVoiceId={selectedVoice?.id}
+              onSelectVoice={setSelectedVoice}
+              disabled={isRunning}
+            />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Tone profile */}
-              <div>
-                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
-                  音调 / 语速配置 (Tone Profile)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setToneProfile("low")}
-                    disabled={isRunning}
-                    className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
-                      toneProfile === "low"
-                        ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
-                        : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                    }`}
-                  >
-                    标准音调 (1.0×)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setToneProfile("high")}
-                    disabled={isRunning}
-                    className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
-                      toneProfile === "high"
-                        ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
-                        : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                    }`}
-                  >
-                    高音调提速 (1.2×)
-                  </button>
+            <div className="border-t border-white/[0.06] pt-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Tone profile */}
+                <div>
+                  <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
+                    音调 / 语速配置 (Tone Profile)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setToneProfile("low")}
+                      disabled={isRunning}
+                      className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
+                        toneProfile === "low"
+                          ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                          : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                      }`}
+                    >
+                      标准音调 (1.0×)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setToneProfile("high")}
+                      disabled={isRunning}
+                      className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
+                        toneProfile === "high"
+                          ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                          : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                      }`}
+                    >
+                      高音调提速 (1.2×)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Video Fit */}
+                <div>
+                  <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
+                    画面对齐策略 (Video Fit)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVideoFit("smart")}
+                      disabled={isRunning}
+                      className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
+                        videoFit === "smart"
+                          ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                          : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                      }`}
+                    >
+                      智能适配 (循环/裁剪)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoFit("preserve")}
+                      disabled={isRunning}
+                      className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
+                        videoFit === "preserve"
+                          ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                          : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                      }`}
+                    >
+                      严格保持原长
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Video Fit */}
-              <div>
-                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
-                  画面对齐策略 (Video Fit)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setVideoFit("smart")}
-                    disabled={isRunning}
-                    className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
-                      videoFit === "smart"
-                        ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
-                        : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                    }`}
-                  >
-                    智能适配 (循环/裁剪)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVideoFit("preserve")}
-                    disabled={isRunning}
-                    className={`rounded-xl border p-2.5 text-xs font-semibold transition-all text-center ${
-                      videoFit === "preserve"
-                        ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
-                        : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                    }`}
-                  >
-                    严格保持原长
-                  </button>
+              {/* Emotion slider */}
+              <div className="bg-black/30 p-3 rounded-xl border border-white/[0.06]">
+                <div className="flex justify-between text-xs text-zinc-300 mb-1.5 font-medium">
+                  <span>情绪与能量强度 (保持优质情绪参考)</span>
+                  <span className="font-mono font-bold text-blue-400">{emotionIntensity}</span>
                 </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.85"
+                  step="0.05"
+                  value={emotionIntensity}
+                  onChange={(e) => setEmotionIntensity(parseFloat(e.target.value))}
+                  disabled={isRunning}
+                  className="w-full accent-blue-500 bg-zinc-800 h-1.5 rounded-lg cursor-pointer"
+                />
               </div>
-            </div>
-
-            {/* Emotion slider */}
-            <div className="bg-black/30 p-3 rounded-xl border border-white/[0.06]">
-              <div className="flex justify-between text-xs text-zinc-300 mb-1.5 font-medium">
-                <span>情绪与能量强度 (Emotion Alpha)</span>
-                <span className="font-mono font-bold text-blue-400">{emotionIntensity}</span>
-              </div>
-              <input
-                type="range"
-                min="0.1"
-                max="0.85"
-                step="0.05"
-                value={emotionIntensity}
-                onChange={(e) => setEmotionIntensity(parseFloat(e.target.value))}
-                disabled={isRunning}
-                className="w-full accent-blue-500 bg-zinc-800 h-1.5 rounded-lg cursor-pointer"
-              />
             </div>
           </div>
 

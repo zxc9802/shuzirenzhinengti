@@ -1,0 +1,10 @@
+[
+  {
+    "id": "default_speaker_1",
+    "name": "默认推荐音色 (深沉口播)",
+    "audioUrl": "https://file.302.ai/gpt/imgs/20260819/9312a23901fa7f214037fa88513a64b3.mp3",
+    "description": "稳重大气，适合企业宣讲、商业洞察与深度口播",
+    "createdAt": 1787700000000,
+    "isDefault": true
+  }
+]

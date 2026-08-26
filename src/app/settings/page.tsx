@@ -1,7 +1,27 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Settings, Save, CheckCircle2, AlertCircle, Mic, Cpu, Server, Terminal, Sparkles } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Settings,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  Mic,
+  Cpu,
+  Server,
+  Terminal,
+  Volume2,
+  Play,
+  Pause,
+  Plus,
+  Trash2,
+  UploadCloud,
+  X,
+  RefreshCw,
+  Check,
+} from "lucide-react";
+import { VoiceItem } from "@/lib/store/voice-store";
+import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<any>({
@@ -15,20 +35,128 @@ export default function SettingsPage() {
     heygenMcpServerArgs: ["scripts/heygen_mcp_server.mjs"],
   });
 
+  const [voices, setVoices] = useState<VoiceItem[]>([]);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
+
+  // New Voice Modal State
+  const [voiceName, setVoiceName] = useState("");
+  const [voiceDesc, setVoiceDesc] = useState("");
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [customAudioUrl, setCustomAudioUrl] = useState("");
+  const [inputMode, setInputMode] = useState<"file" | "url">("file");
+  const [uploadingVoice, setUploadingVoice] = useState(false);
+  const [voiceModalError, setVoiceModalError] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchData = async () => {
+    try {
+      const [settingsResp, voicesResp] = await Promise.all([
+        fetch("/api/settings"),
+        fetch("/api/voices"),
+      ]);
+      const settingsData = await settingsResp.json();
+      if (settingsData.config) setConfig(settingsData.config);
+
+      const voicesData = await voicesResp.json();
+      if (voicesData.voices) setVoices(voicesData.voices);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    fetch("/api/settings")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.config) setConfig(data.config);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    fetchData();
   }, []);
+
+  const handlePlayVoice = (voice: VoiceItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (playingAudioId === voice.id) {
+      audioPlayerRef.current?.pause();
+      setPlayingAudioId(null);
+    } else {
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio();
+      }
+      audioPlayerRef.current.src = voice.audioUrl;
+      audioPlayerRef.current.play().catch((err) => console.warn("Audio play error", err));
+      setPlayingAudioId(voice.id);
+      audioPlayerRef.current.onended = () => setPlayingAudioId(null);
+    }
+  };
+
+  const handleCreateVoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!voiceName.trim()) {
+      setVoiceModalError("请输入音色名称");
+      return;
+    }
+
+    setUploadingVoice(true);
+    setVoiceModalError(null);
+
+    try {
+      if (inputMode === "file") {
+        if (!audioFile) throw new Error("请选择参考音频文件 (MP3/WAV/M4A)");
+        const formData = new FormData();
+        formData.append("file", audioFile);
+        formData.append("name", voiceName.trim());
+        formData.append("description", voiceDesc.trim() || "用户自定义录制原声");
+
+        const resp = await fetch("/api/voices", { method: "POST", body: formData });
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || "上传失败");
+        setVoices((prev) => [data.voice, ...prev]);
+      } else {
+        if (!customAudioUrl.trim()) throw new Error("请输入音频文件的公网直链 URL");
+        const resp = await fetch("/api/voices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: voiceName.trim(),
+            description: voiceDesc.trim() || "自定义音频直链",
+            audioUrl: customAudioUrl.trim(),
+          }),
+        });
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || "添加失败");
+        setVoices((prev) => [data.voice, ...prev]);
+      }
+
+      setIsVoiceModalOpen(false);
+      setVoiceName("");
+      setVoiceDesc("");
+      setAudioFile(null);
+      setCustomAudioUrl("");
+    } catch (err: any) {
+      setVoiceModalError(err.message || "创建音色失败");
+    } finally {
+      setUploadingVoice(false);
+    }
+  };
+
+  const handleDeleteVoice = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("确定要从声音库中删除此音色吗？")) return;
+    try {
+      const resp = await fetch(`/api/voices?id=${id}`, { method: "DELETE" });
+      const data = await resp.json();
+      if (data.success) {
+        setVoices((prev) => prev.filter((v) => v.id !== id));
+      }
+    } catch (err) {
+      console.error("Delete voice error", err);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,20 +186,110 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="border-b border-white/[0.08] pb-6">
         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
-          <Settings className="h-8 w-8 text-indigo-400" />
-          <span>系统参数与 MCP 配置</span>
+          <Settings className="h-7 w-7 text-blue-400" />
+          <span>系统参数与声音库配置</span>
         </h1>
         <p className="mt-1.5 text-xs sm:text-sm text-zinc-400">
-          HeyGen 对口型完全通过 **MCP (Model Context Protocol)** 客户端调用；配置 302.AI IndexTTS-2 凭据用于声音克隆。
+          管理发音人专属声音库、HeyGen MCP 客户端通信管道与 302.AI IndexTTS-2 基础凭据。
         </p>
       </div>
 
+      {/* Voice Library Management Section */}
+      <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+              <Mic className="h-4 w-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                发音人声音库管理 (Voice Library)
+              </h2>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                支持上传自定义参考人声进行即时声音克隆，生成数字人时可随时选用
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsVoiceModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition-all cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>+ 新增克隆音色</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {voices.map((voice) => {
+            const isPlaying = playingAudioId === voice.id;
+            return (
+              <div
+                key={voice.id}
+                className="group flex items-center justify-between p-3.5 rounded-xl border border-white/[0.08] bg-black/40 hover:border-white/[0.16] transition-all"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] border border-white/[0.08] text-zinc-400">
+                    <Volume2 className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-zinc-100 truncate">
+                        {voice.name}
+                      </span>
+                      {voice.isDefault && (
+                        <span className="rounded-md bg-white/[0.08] border border-white/[0.1] px-1.5 py-0.2 text-[9px] font-mono text-zinc-400">
+                          默认预设
+                        </span>
+                      )}
+                    </div>
+                    {voice.description && (
+                      <p className="text-[10px] text-zinc-400 truncate mt-0.5">
+                        {voice.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    title="试听音色"
+                    onClick={(e) => handlePlayVoice(voice, e)}
+                    className={cn(
+                      "h-7 w-7 flex items-center justify-center rounded-lg border text-xs transition-all",
+                      isPlaying
+                        ? "bg-blue-600 text-white border-blue-500 animate-pulse"
+                        : "bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 border-white/[0.08]"
+                    )}
+                  >
+                    {isPlaying ? <Pause className="h-3 w-3 fill-white" /> : <Play className="h-3 w-3 fill-zinc-300 ml-0.5" />}
+                  </button>
+
+                  {!voice.isDefault && (
+                    <button
+                      type="button"
+                      title="删除此音色"
+                      onClick={(e) => handleDeleteVoice(voice.id, e)}
+                      className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Main Settings Form */}
       <form onSubmit={handleSave} className="space-y-7">
         {/* Section 1: HeyGen MCP Client Configuration */}
-        <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
+        <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
           <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
                 <Cpu className="h-4 w-4" />
               </div>
               <div>
@@ -84,7 +302,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <span className="flex items-center gap-1 text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
-              <Sparkles className="h-3 w-3 text-emerald-400" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
               标准 MCP 管道就绪
             </span>
           </div>
@@ -100,11 +318,11 @@ export default function SettingsPage() {
                   onClick={() => setConfig({ ...config, heygenMcpTransport: "stdio" })}
                   className={`rounded-xl border p-3.5 text-xs font-semibold transition-all text-left flex items-start gap-3 ${
                     config.heygenMcpTransport === "stdio"
-                      ? "border-indigo-500/80 bg-indigo-500/20 text-indigo-200 shadow-sm shadow-indigo-500/10 ring-1 ring-indigo-500/30"
+                      ? "border-blue-500/80 bg-blue-500/15 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
                       : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                   }`}
                 >
-                  <Terminal className="h-4 w-4 mt-0.5 shrink-0 text-indigo-400" />
+                  <Terminal className="h-4 w-4 mt-0.5 shrink-0 text-blue-400" />
                   <div>
                     <div className="font-bold text-zinc-100">Stdio (本地子进程)</div>
                     <div className="text-[11px] text-zinc-400 font-normal mt-0.5">
@@ -118,11 +336,11 @@ export default function SettingsPage() {
                   onClick={() => setConfig({ ...config, heygenMcpTransport: "sse" })}
                   className={`rounded-xl border p-3.5 text-xs font-semibold transition-all text-left flex items-start gap-3 ${
                     config.heygenMcpTransport === "sse"
-                      ? "border-indigo-500/80 bg-indigo-500/20 text-indigo-200 shadow-sm shadow-indigo-500/10 ring-1 ring-indigo-500/30"
+                      ? "border-blue-500/80 bg-blue-500/15 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
                       : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                   }`}
                 >
-                  <Server className="h-4 w-4 mt-0.5 shrink-0 text-purple-400" />
+                  <Server className="h-4 w-4 mt-0.5 shrink-0 text-zinc-400" />
                   <div>
                     <div className="font-bold text-zinc-100">SSE / HTTP (远程模式)</div>
                     <div className="text-[11px] text-zinc-400 font-normal mt-0.5">
@@ -145,7 +363,7 @@ export default function SettingsPage() {
                     onChange={(e) =>
                       setConfig({ ...config, heygenMcpServerCommand: e.target.value })
                     }
-                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -165,7 +383,7 @@ export default function SettingsPage() {
                         heygenMcpServerArgs: e.target.value.split(" ").filter(Boolean),
                       })
                     }
-                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -181,7 +399,7 @@ export default function SettingsPage() {
                     setConfig({ ...config, heygenMcpServerUrl: e.target.value })
                   }
                   placeholder="http://localhost:8000/sse"
-                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                 />
               </div>
             )}
@@ -189,17 +407,17 @@ export default function SettingsPage() {
         </div>
 
         {/* Section 2: IndexTTS 302.AI Configuration */}
-        <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
+        <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
           <div className="flex items-center gap-2.5 border-b border-white/[0.08] pb-3.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
               <Mic className="h-4 w-4" />
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
-                302.AI IndexTTS-2 语音克隆与音色配置
+                302.AI IndexTTS-2 接口凭据与情绪参考
               </h2>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                已自动读取 Skill 中的音色参考与凭据默认项
+                配置 API Key 与基准情绪参考音频
               </p>
             </div>
           </div>
@@ -216,25 +434,7 @@ export default function SettingsPage() {
                   setConfig({ ...config, indexttsApiKey: e.target.value })
                 }
                 placeholder="sk-..."
-                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">
-                说话人音色克隆参考音频 URL (INDEXTTS_SPEAKER_AUDIO_URL)
-              </label>
-              <input
-                type="text"
-                value={config.indexttsSpeakerAudioUrl || ""}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    indexttsSpeakerAudioUrl: e.target.value,
-                  })
-                }
-                placeholder="https://.../speaker_reference.wav"
-                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
               />
             </div>
 
@@ -252,7 +452,7 @@ export default function SettingsPage() {
                   })
                 }
                 placeholder="https://.../emotion_reference.wav"
-                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
               />
             </div>
           </div>
@@ -277,12 +477,187 @@ export default function SettingsPage() {
         <button
           type="submit"
           disabled={saving || loading}
-          className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 px-6 py-3.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] cursor-pointer"
+          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-6 py-3.5 text-xs font-bold text-white shadow-lg shadow-blue-600/25 transition-all active:scale-[0.98] cursor-pointer"
         >
           <Save className="h-4 w-4" />
-          <span>{saving ? "正在保存中..." : "保存配置"}</span>
+          <span>{saving ? "正在保存中..." : "保存系统配置"}</span>
         </button>
       </form>
+
+      {/* Voice Upload Modal */}
+      {isVoiceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/[0.12] bg-[#10121a] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/15 text-blue-400 border border-blue-500/25">
+                  <Mic className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100">
+                    录制 / 上传克隆声音
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    上传 5~15 秒干净清晰口播原声，即可克隆属于你的专属音色
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVoiceModalOpen(false)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.08] hover:text-white transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateVoice} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">
+                  音色名称 (自定义标识) <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  placeholder="例如: 我的原声音色 / 科技解说男声 / 清晰女播音"
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center gap-2 border-b border-white/[0.06] pb-2">
+                <button
+                  type="button"
+                  onClick={() => setInputMode("file")}
+                  className={cn(
+                    "text-xs font-semibold pb-1 border-b-2 transition-colors",
+                    inputMode === "file"
+                      ? "border-blue-500 text-blue-300"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300"
+                  )}
+                >
+                  本地音频上传 (MP3/WAV/M4A)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode("url")}
+                  className={cn(
+                    "text-xs font-semibold pb-1 border-b-2 transition-colors",
+                    inputMode === "url"
+                      ? "border-blue-500 text-blue-300"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300"
+                  )}
+                >
+                  远程音频 URL 直链
+                </button>
+              </div>
+
+              {inputMode === "file" ? (
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/mp3,audio/wav,audio/m4a,audio/aac,audio/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setAudioFile(e.target.files[0]);
+                        if (!voiceName) {
+                          setVoiceName(e.target.files[0].name.replace(/\.[^/.]+$/, ""));
+                        }
+                      }
+                    }}
+                  />
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-5 rounded-xl border border-dashed transition-all cursor-pointer",
+                      audioFile
+                        ? "border-emerald-500/50 bg-emerald-500/[0.06] text-emerald-300"
+                        : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
+                    )}
+                  >
+                    <UploadCloud className="h-7 w-7 text-blue-400 mb-2" />
+                    {audioFile ? (
+                      <div className="text-center">
+                        <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[240px]">
+                          已选: {audioFile.name}
+                        </span>
+                        <span className="text-[10px] text-zinc-400">点击可更换其他音频文件</span>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-xs font-semibold text-zinc-200 block">
+                          点击上传参考音频
+                        </span>
+                        <span className="text-[10px] text-zinc-400 block mt-0.5">
+                          支持 MP3 / WAV / M4A 格式，建议 5~15 秒单人纯净人声
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-zinc-300">
+                    音频公网 URL (HTTP/HTTPS)
+                  </label>
+                  <input
+                    type="text"
+                    value={customAudioUrl}
+                    onChange={(e) => setCustomAudioUrl(e.target.value)}
+                    placeholder="https://your-domain.com/speaker.wav"
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">
+                  音色风格说明 (可选)
+                </label>
+                <input
+                  type="text"
+                  value={voiceDesc}
+                  onChange={(e) => setVoiceDesc(e.target.value)}
+                  placeholder="例如: 沉稳专业男声"
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {voiceModalError && (
+                <div className="flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/20 p-3 text-xs text-rose-300">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                  <span>{voiceModalError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsVoiceModalOpen(false)}
+                  className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-zinc-400 hover:text-white"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingVoice}
+                  className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  {uploadingVoice ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  <span>{uploadingVoice ? "正在保存音色..." : "确认添加至声音库"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
