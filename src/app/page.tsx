@@ -96,6 +96,30 @@ export default function StudioPage() {
       }
     };
 
+    // Check preselected avatar from /avatars
+    const savedPreselectedAvatar = localStorage.getItem("preselected_avatar");
+    if (savedPreselectedAvatar) {
+      try {
+        const parsed = JSON.parse(savedPreselectedAvatar);
+        setVideoData(parsed);
+        localStorage.removeItem("preselected_avatar");
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // Check preselected voice from /voices
+    const savedPreselectedVoice = localStorage.getItem("preselected_voice");
+    if (savedPreselectedVoice) {
+      try {
+        const parsed = JSON.parse(savedPreselectedVoice);
+        setSelectedVoice(parsed);
+        localStorage.removeItem("preselected_voice");
+      } catch (e) {
+        // ignore
+      }
+    }
+
     restoreTask();
   }, []);
 

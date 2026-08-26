@@ -5,6 +5,7 @@ import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import { VoiceStore } from "@/lib/store/voice-store";
 import { getAppConfig } from "@/lib/config";
+import { CosService } from "@/lib/cos";
 
 export async function GET() {
   try {
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;
       const name = (formData.get("name") as string)?.trim() || "未命名自定义音色";
-      const description = (formData.get("description") as string)?.trim() || "用户自定义克隆音色";
+      const description = (formData.get("description") as string)?.trim() || "用户自定义录制原声";
 
       if (!file) {
         return NextResponse.json({ error: "请上传音频文件 (MP3/WAV/M4A)" }, { status: 400 });
@@ -40,8 +41,24 @@ export async function POST(req: NextRequest) {
       await pipeline(nodeReadable, writeStream);
 
       const config = getAppConfig();
-      const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-      const publicAudioUrl = `${baseUrl}/uploads/voices/${safeName}`;
+      let publicAudioUrl = `/uploads/voices/${safeName}`;
+      let isCos = false;
+
+      // Upload to Tencent Cloud COS if configured
+      if (CosService.isConfigured()) {
+        try {
+          const cosKey = `uploads/voices/${safeName}`;
+          publicAudioUrl = await CosService.uploadFile(filePath, cosKey);
+          isCos = true;
+        } catch (cosErr: any) {
+          console.warn("COS upload for voice fallback to local:", cosErr.message);
+          const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
+          publicAudioUrl = `${baseUrl}/uploads/voices/${safeName}`;
+        }
+      } else {
+        const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
+        publicAudioUrl = `${baseUrl}/uploads/voices/${safeName}`;
+      }
 
       const createdVoice = VoiceStore.create({
         name,
@@ -51,7 +68,7 @@ export async function POST(req: NextRequest) {
         isDefault: false,
       });
 
-      return NextResponse.json({ success: true, voice: createdVoice });
+      return NextResponse.json({ success: true, voice: createdVoice, isCos });
     } else {
       const body = await req.json();
       const { name, audioUrl, description } = body;
