@@ -3,16 +3,15 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install all build dependencies
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 # Copy project files
 COPY . .
 
 # Build Next.js
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
 RUN npm run build
 
 # Stage 2: Production Runner
@@ -25,7 +24,7 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install runtime ffmpeg and ffprobe (Essential for video audio processing)
+# Install runtime ffmpeg and ffprobe (Essential for video/audio processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
