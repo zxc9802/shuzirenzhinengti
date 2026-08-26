@@ -49,6 +49,8 @@ function loadSkillEnvFallback(): Partial<AppConfig> {
 
 const skillDefaults = loadSkillEnvFallback();
 
+const defaultMcpScriptPath = path.join(process.cwd(), "scripts", "heygen_mcp_server.mjs");
+
 const DEFAULT_CONFIG: AppConfig = {
   indexttsApiKey:
     process.env.INDEXTTS_302_API_KEY ||
@@ -73,14 +75,17 @@ const DEFAULT_CONFIG: AppConfig = {
   heygenMcpServerUrl:
     process.env.HEYGEN_MCP_SERVER_URL || "http://localhost:8000/sse",
   heygenMcpServerCommand:
-    process.env.HEYGEN_MCP_SERVER_COMMAND || "npx",
+    process.env.HEYGEN_MCP_SERVER_COMMAND || "node",
   heygenMcpServerArgs: process.env.HEYGEN_MCP_SERVER_ARGS
     ? JSON.parse(process.env.HEYGEN_MCP_SERVER_ARGS)
-    : ["-y", "@heygen/mcp-server"],
+    : [defaultMcpScriptPath],
   heygenMcpTransport:
     (process.env.HEYGEN_MCP_TRANSPORT as "sse" | "stdio" | "direct") || "stdio",
   storageDir: path.join(process.cwd(), "public", "jobs"),
-  publicBaseUrl: process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000",
+  publicBaseUrl:
+    process.env.PUBLIC_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000",
 };
 
 const CONFIG_FILE_PATH = path.join(process.cwd(), ".settings.json");
@@ -89,6 +94,13 @@ export function getAppConfig(): AppConfig {
   try {
     if (fs.existsSync(CONFIG_FILE_PATH)) {
       const saved = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, "utf-8"));
+      // Ensure args is properly formatted and points to local script if default
+      if (
+        saved.heygenMcpServerCommand === "node" &&
+        (!saved.heygenMcpServerArgs || saved.heygenMcpServerArgs.length === 0 || saved.heygenMcpServerArgs[0].includes("@heygen"))
+      ) {
+        saved.heygenMcpServerArgs = [defaultMcpScriptPath];
+      }
       return { ...DEFAULT_CONFIG, ...saved };
     }
   } catch (err) {
