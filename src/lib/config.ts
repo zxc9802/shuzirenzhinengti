@@ -13,6 +13,14 @@ export interface AppConfig {
   heygenMcpTransport: "sse" | "stdio" | "direct";
   storageDir: string;
   publicBaseUrl: string;
+
+  // Tencent Cloud COS Configuration
+  cosSecretId: string;
+  cosSecretKey: string;
+  cosBucket: string;
+  cosRegion: string;
+  cosCustomDomain: string;
+  cosEnabled: boolean;
 }
 
 function loadSkillEnvFallback(): Partial<AppConfig> {
@@ -41,6 +49,11 @@ function loadSkillEnvFallback(): Partial<AppConfig> {
         result.indexttsEmotionAudioPath = val;
       if (key === "INDEXTTS_EMOTION_AUDIO_URL")
         result.indexttsEmotionAudioUrl = val;
+      if (key === "COS_SECRET_ID") result.cosSecretId = val;
+      if (key === "COS_SECRET_KEY") result.cosSecretKey = val;
+      if (key === "COS_BUCKET") result.cosBucket = val;
+      if (key === "COS_REGION") result.cosRegion = val;
+      if (key === "COS_CUSTOM_DOMAIN") result.cosCustomDomain = val;
     }
   }
 
@@ -86,6 +99,14 @@ const DEFAULT_CONFIG: AppConfig = {
     process.env.PUBLIC_BASE_URL ||
     process.env.NEXT_PUBLIC_BASE_URL ||
     "http://localhost:3000",
+
+  // Tencent COS
+  cosSecretId: process.env.COS_SECRET_ID || skillDefaults.cosSecretId || "",
+  cosSecretKey: process.env.COS_SECRET_KEY || skillDefaults.cosSecretKey || "",
+  cosBucket: process.env.COS_BUCKET || skillDefaults.cosBucket || "",
+  cosRegion: process.env.COS_REGION || skillDefaults.cosRegion || "ap-guangzhou",
+  cosCustomDomain: process.env.COS_CUSTOM_DOMAIN || skillDefaults.cosCustomDomain || "",
+  cosEnabled: process.env.COS_ENABLED === "true" || Boolean(process.env.COS_SECRET_ID || skillDefaults.cosSecretId),
 };
 
 const CONFIG_FILE_PATH = path.join(process.cwd(), ".settings.json");
@@ -94,7 +115,6 @@ export function getAppConfig(): AppConfig {
   try {
     if (fs.existsSync(CONFIG_FILE_PATH)) {
       const saved = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, "utf-8"));
-      // Ensure args is properly formatted and points to local script if default
       if (
         saved.heygenMcpServerCommand === "node" &&
         (!saved.heygenMcpServerArgs || saved.heygenMcpServerArgs.length === 0 || saved.heygenMcpServerArgs[0].includes("@heygen"))

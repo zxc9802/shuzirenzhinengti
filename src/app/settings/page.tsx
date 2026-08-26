@@ -19,6 +19,9 @@ import {
   X,
   RefreshCw,
   Check,
+  Cloud,
+  Layers,
+  Zap,
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
 import { cn } from "@/lib/utils";
@@ -33,6 +36,14 @@ export default function SettingsPage() {
     heygenMcpServerUrl: "http://localhost:8000/sse",
     heygenMcpServerCommand: "node",
     heygenMcpServerArgs: ["scripts/heygen_mcp_server.mjs"],
+
+    // Tencent Cloud COS
+    cosSecretId: "",
+    cosSecretKey: "",
+    cosBucket: "",
+    cosRegion: "ap-guangzhou",
+    cosCustomDomain: "",
+    cosEnabled: true,
   });
 
   const [voices, setVoices] = useState<VoiceItem[]>([]);
@@ -47,6 +58,10 @@ export default function SettingsPage() {
   const [inputMode, setInputMode] = useState<"file" | "url">("file");
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [voiceModalError, setVoiceModalError] = useState<string | null>(null);
+
+  // COS Test State
+  const [testingCos, setTestingCos] = useState(false);
+  const [cosTestResult, setCosTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -158,6 +173,30 @@ export default function SettingsPage() {
     }
   };
 
+  const handleTestCos = async () => {
+    setTestingCos(true);
+    setCosTestResult(null);
+    try {
+      const resp = await fetch("/api/cos/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cosSecretId: config.cosSecretId,
+          cosSecretKey: config.cosSecretKey,
+          cosBucket: config.cosBucket,
+          cosRegion: config.cosRegion,
+          cosCustomDomain: config.cosCustomDomain,
+        }),
+      });
+      const data = await resp.json();
+      setCosTestResult(data);
+    } catch (err: any) {
+      setCosTestResult({ success: false, message: err.message || "网络异常" });
+    } finally {
+      setTestingCos(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -187,11 +226,128 @@ export default function SettingsPage() {
       <div className="border-b border-white/[0.08] pb-6">
         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
           <Settings className="h-7 w-7 text-blue-400" />
-          <span>系统参数与声音库配置</span>
+          <span>系统参数与对象存储配置</span>
         </h1>
         <p className="mt-1.5 text-xs sm:text-sm text-zinc-400">
-          管理发音人专属声音库、HeyGen MCP 客户端通信管道与 302.AI IndexTTS-2 基础凭据。
+          管理腾讯云 COS 对象存储、发音人声音库、HeyGen MCP 客户端与 302.AI 接口凭据。
         </p>
+      </div>
+
+      {/* Section 0: Tencent Cloud COS Storage Configuration */}
+      <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+              <Cloud className="h-4 w-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                腾讯云对象存储 (Tencent Cloud COS) 配置
+              </h2>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                口播形象视频与媒体素材将自动存入腾讯云 COS，实现公网高速分发与持久化
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleTestCos}
+            disabled={testingCos || !config.cosSecretId || !config.cosSecretKey}
+            className="flex items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.05] hover:bg-white/[0.1] px-3 py-1.5 text-xs font-semibold text-zinc-200 transition-all disabled:opacity-40 cursor-pointer"
+          >
+            {testingCos ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />
+            ) : (
+              <Zap className="h-3.5 w-3.5 text-blue-400" />
+            )}
+            <span>{testingCos ? "正在校验密钥..." : "测试 COS 连接"}</span>
+          </button>
+        </div>
+
+        {cosTestResult && (
+          <div
+            className={cn(
+              "flex items-center gap-2 rounded-xl p-3 text-xs font-medium",
+              cosTestResult.success
+                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                : "bg-rose-500/10 border border-rose-500/20 text-rose-300"
+            )}
+          >
+            {cosTestResult.success ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+            )}
+            <span>{cosTestResult.message}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">
+              腾讯云 SecretId (COS_SECRET_ID)
+            </label>
+            <input
+              type="text"
+              value={config.cosSecretId || ""}
+              onChange={(e) => setConfig({ ...config, cosSecretId: e.target.value })}
+              placeholder="AKID..."
+              className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">
+              腾讯云 SecretKey (COS_SECRET_KEY)
+            </label>
+            <input
+              type="password"
+              value={config.cosSecretKey || ""}
+              onChange={(e) => setConfig({ ...config, cosSecretKey: e.target.value })}
+              placeholder="••••••••••••••••••••"
+              className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">
+              存储桶名称 Bucket (COS_BUCKET)
+            </label>
+            <input
+              type="text"
+              value={config.cosBucket || ""}
+              onChange={(e) => setConfig({ ...config, cosBucket: e.target.value })}
+              placeholder="例如: digital-human-1250000000"
+              className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">
+              所属地域 Region (COS_REGION)
+            </label>
+            <input
+              type="text"
+              value={config.cosRegion || "ap-guangzhou"}
+              onChange={(e) => setConfig({ ...config, cosRegion: e.target.value })}
+              placeholder="例如: ap-guangzhou / ap-shanghai / ap-beijing"
+              className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">
+              自定义 CDN 加速域名 (可选，留空则使用腾讯云默认 COS 域名)
+            </label>
+            <input
+              type="text"
+              value={config.cosCustomDomain || ""}
+              onChange={(e) => setConfig({ ...config, cosCustomDomain: e.target.value })}
+              placeholder="例如: https://cdn.your-domain.com"
+              className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Voice Library Management Section */}
