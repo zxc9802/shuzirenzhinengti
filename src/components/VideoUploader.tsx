@@ -1,7 +1,17 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { UploadCloud, Film, CheckCircle2, AlertCircle, RefreshCw, Layers, Clock, Activity } from "lucide-react";
+import {
+  UploadCloud,
+  Film,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Layers,
+  Clock,
+  Activity,
+  ArrowUpCircle,
+} from "lucide-react";
 import { formatBytes, formatDuration } from "@/lib/utils";
 
 interface VideoUploaderProps {
@@ -19,6 +29,8 @@ export default function VideoUploader({
   disabled = false,
 }: VideoUploaderProps) {
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeedText, setUploadSpeedText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [uploadedInfo, setUploadedInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,43 +38,97 @@ export default function VideoUploader({
 
   const handleUpload = async (file: File) => {
     if (!file) return;
-    if (!file.type.startsWith("video/")) {
-      setError("请上传 MP4 或 MOV 格式的单人口播视频文件");
+    if (!file.type.startsWith("video/") && !file.name.match(/\.(mp4|mov|mkv|webm)$/i)) {
+      setError("请上传 MP4 或 MOV 格式的口播视频素材");
       return;
     }
 
     setError(null);
     setUploading(true);
+    setUploadProgress(0);
+    setUploadSpeedText("准备上传...");
+
+    // Fast local video probe for instant visual feedback
+    const localBlobUrl = URL.createObjectURL(file);
+    const tempVideo = document.createElement("video");
+    tempVideo.src = localBlobUrl;
+    tempVideo.preload = "metadata";
+
+    const localProbePromise = new Promise<{ width: number; height: number; durationSeconds: number }>((resolve) => {
+      tempVideo.onloadedmetadata = () => {
+        resolve({
+          width: tempVideo.videoWidth || 1080,
+          height: tempVideo.videoHeight || 1920,
+          durationSeconds: tempVideo.duration || 0,
+        });
+      };
+      tempVideo.onerror = () => {
+        resolve({ width: 1080, height: 1920, durationSeconds: 0 });
+      };
+    });
+
+    const localProbe = await localProbePromise;
 
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      const resp = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
+      // Perform upload with accurate XMLHttpRequest progress
+      const uploadPromise = new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            setUploadProgress(percent);
+            setUploadSpeedText(
+              `${percent}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`
+            );
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const res = JSON.parse(xhr.responseText);
+              if (res.success) resolve(res);
+              else reject(new Error(res.error || "上传失败"));
+            } catch {
+              reject(new Error("解析响应失败"));
+            }
+          } else {
+            reject(new Error(`上传异常 (${xhr.status})`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("网络连接失败，请检查网络后重试"));
+        xhr.send(formData);
       });
 
-      if (!resp.ok) {
-        throw new Error("上传失败，请检查文件后重试");
-      }
+      const data = await uploadPromise;
 
-      const data = await resp.json();
-      if (!data.success) {
-        throw new Error(data.error || "处理失败");
-      }
+      const finalData = {
+        ...data,
+        probe: data.probe || {
+          ...localProbe,
+          fps: 30,
+          hasAudio: true,
+        },
+      };
 
-      setUploadedInfo(data);
+      setUploadedInfo(finalData);
       onVideoUploaded({
-        name: data.fileName,
-        path: data.filePath,
-        url: data.fileUrl,
-        probe: data.probe,
+        name: finalData.fileName,
+        path: finalData.filePath,
+        url: finalData.fileUrl,
+        probe: finalData.probe,
       });
     } catch (err: any) {
       setError(err.message || "上传异常");
     } finally {
       setUploading(false);
+      URL.revokeObjectURL(localBlobUrl);
     }
   };
 
@@ -87,9 +153,9 @@ export default function VideoUploader({
         onClick={() => !disabled && !uploading && fileInputRef.current?.click()}
         className={`group relative flex flex-col items-center justify-center rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden ${
           dragOver
-            ? "border-indigo-500 bg-indigo-500/[0.08] shadow-lg shadow-indigo-500/10"
+            ? "border-blue-500 bg-blue-500/[0.08] shadow-lg shadow-blue-500/10"
             : uploadedInfo
-            ? "border-white/[0.1] bg-[#12141f]/70 hover:border-indigo-500/40"
+            ? "border-white/[0.1] bg-[#12141f]/70 hover:border-blue-500/40"
             : "border-white/[0.08] bg-[#0f111a]/60 hover:border-white/[0.16] hover:bg-[#131622]/80"
         } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
       >
@@ -107,15 +173,25 @@ export default function VideoUploader({
         />
 
         {uploading ? (
-          <div className="flex flex-col items-center py-8 text-center px-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 mb-3">
-              <RefreshCw className="h-6 w-6 animate-spin" />
+          <div className="flex flex-col items-center py-7 text-center px-6 w-full max-w-md">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 mb-3">
+              <RefreshCw className="h-5 w-5 animate-spin" />
             </div>
-            <p className="text-sm font-semibold text-zinc-100">
-              正在上传并分析音视频轨道...
-            </p>
-            <p className="text-xs text-zinc-400 mt-1">
-              执行 FFprobe 探测分辨率、帧率与旋转方向
+            <div className="flex items-center justify-between w-full text-xs font-semibold text-zinc-200 mb-1.5">
+              <span>{uploadProgress < 100 ? "正在上传素材到服务器..." : "正在完成音画轨道核验..."}</span>
+              <span className="font-mono text-blue-400">{uploadProgress}%</span>
+            </div>
+
+            {/* Live Progress Bar */}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-900 border border-white/[0.05] mb-2 p-[1px]">
+              <div
+                className="h-full bg-blue-500 transition-all duration-200 rounded-full"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+
+            <p className="text-[11px] font-mono text-zinc-400">
+              {uploadSpeedText || "传输中..."}
             </p>
           </div>
         ) : uploadedInfo ? (
@@ -148,14 +224,14 @@ export default function VideoUploader({
               {uploadedInfo.probe && (
                 <div className="grid grid-cols-2 gap-2 text-xs bg-black/40 p-2.5 rounded-xl border border-white/[0.06]">
                   <div className="flex items-center gap-1.5 text-zinc-400">
-                    <Layers className="h-3.5 w-3.5 text-indigo-400" />
+                    <Layers className="h-3.5 w-3.5 text-blue-400" />
                     <span>分辨率:</span>
                     <span className="text-zinc-200 font-mono font-medium">
                       {uploadedInfo.probe.width}×{uploadedInfo.probe.height}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 text-zinc-400">
-                    <Clock className="h-3.5 w-3.5 text-purple-400" />
+                    <Clock className="h-3.5 w-3.5 text-zinc-400" />
                     <span>时长:</span>
                     <span className="text-zinc-200 font-mono font-medium">
                       {formatDuration(uploadedInfo.probe.durationSeconds)}
@@ -165,7 +241,7 @@ export default function VideoUploader({
                     <Activity className="h-3.5 w-3.5 text-blue-400" />
                     <span>帧率:</span>
                     <span className="text-zinc-200 font-mono font-medium">
-                      {uploadedInfo.probe.fps} FPS
+                      {uploadedInfo.probe.fps || 30} FPS
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 text-zinc-400">
@@ -182,14 +258,14 @@ export default function VideoUploader({
                   </div>
                 </div>
               )}
-              <p className="text-[11px] font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
+              <p className="text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors">
                 点击更换其他视频素材 →
               </p>
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center py-8 text-center px-4">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 group-hover:scale-105 group-hover:bg-indigo-500/15 transition-all shadow-sm">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-800 border border-white/[0.1] text-blue-400 group-hover:scale-105 group-hover:bg-zinc-700 transition-all shadow-sm">
               <UploadCloud className="h-6 w-6" />
             </div>
             <p className="text-sm font-semibold text-zinc-100">

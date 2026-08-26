@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
 import { probeMedia } from "@/lib/engine/ffmpeg";
 
 export async function POST(req: NextRequest) {
@@ -9,18 +11,19 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
 
     if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+      return NextResponse.json({ error: "未检测到上传文件" }, { status: 400 });
     }
-
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
 
     const uploadsDir = path.join(process.cwd(), "public", "uploads");
     fs.mkdirSync(uploadsDir, { recursive: true });
 
     const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
     const filePath = path.join(uploadsDir, safeName);
-    fs.writeFileSync(filePath, buffer);
+
+    // Fast streaming write to disk
+    const nodeReadable = Readable.fromWeb(file.stream() as any);
+    const writeStream = fs.createWriteStream(filePath);
+    await pipeline(nodeReadable, writeStream);
 
     const fileUrl = `/uploads/${safeName}`;
 
@@ -28,7 +31,7 @@ export async function POST(req: NextRequest) {
     try {
       probe = await probeMedia(filePath);
     } catch (e: any) {
-      console.warn("Probe failed for uploaded file:", e.message);
+      console.warn("Probe warning for uploaded file:", e.message);
     }
 
     return NextResponse.json({
@@ -41,7 +44,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "Upload failed" },
+      { error: err.message || "上传异常" },
       { status: 500 }
     );
   }
