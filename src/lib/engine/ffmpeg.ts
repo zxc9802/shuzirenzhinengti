@@ -275,3 +275,31 @@ export async function finalizeVideo(
   await execCommand("ffmpeg", args);
   return await probeMedia(outputFinalPath);
 }
+
+export async function extractAudioFromMedia(
+  inputMediaFilePath: string,
+  outputAudioPath: string
+): Promise<string> {
+  if (!fs.existsSync(inputMediaFilePath)) {
+    throw new Error(`Media file not found: ${inputMediaFilePath}`);
+  }
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-i",
+    inputMediaFilePath,
+    "-vn",
+    "-acodec",
+    "libmp3lame",
+    "-q:a",
+    "2",
+    outputAudioPath,
+  ];
+
+  await execCommand("ffmpeg", args);
+  return outputAudioPath;
+}
+

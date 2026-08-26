@@ -18,7 +18,7 @@ import {
   UploadCloud,
   X,
   AlertCircle,
-  Sparkles,
+  Film,
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
 import { cn } from "@/lib/utils";
@@ -89,7 +89,7 @@ export default function VoicesPage() {
 
     try {
       if (inputMode === "file") {
-        if (!audioFile) throw new Error("请上传 5~15 秒干净清晰口播原声音频");
+        if (!audioFile) throw new Error("请上传音频文件 (MP3/WAV) 或视频文件 (MP4/MOV)");
         const formData = new FormData();
         formData.append("file", audioFile);
         formData.append("name", voiceName.trim());
@@ -161,7 +161,7 @@ export default function VoicesPage() {
             <span>发音人声音库 (Voice Library)</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            上传并管理您的专属声音。生成数字人时，系统将使用您选中的声音克隆音色，把文本合成为逼真口播语音，自动同步腾讯云 COS。
+            上传录音或口播视频（系统自动提取音频），克隆专属发音人音色，并自动存入腾讯云 COS 新加坡存储桶。
           </p>
         </div>
 
@@ -171,7 +171,7 @@ export default function VoicesPage() {
           className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98] cursor-pointer"
         >
           <Plus className="h-4 w-4" />
-          <span>+ 上传克隆新声音</span>
+          <span>+ 上传音频/视频提取声音</span>
         </button>
       </div>
 
@@ -206,7 +206,7 @@ export default function VoicesPage() {
           </div>
           <h3 className="text-sm font-bold text-zinc-200">声音库暂无素材</h3>
           <p className="text-xs text-zinc-500 max-w-sm">
-            点击右上角上传您的 5~15 秒录音，即可克隆属于您的专属口播发音人音色。
+            支持上传 5~15 秒录音或直接上传口播视频，系统会自动提取音频克隆发音人音色。
           </p>
           <button
             type="button"
@@ -214,7 +214,7 @@ export default function VoicesPage() {
             className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white shadow-md cursor-pointer"
           >
             <Plus className="h-4 w-4" />
-            <span>立即录制/上传声音</span>
+            <span>立即上传声音</span>
           </button>
         </div>
       ) : (
@@ -310,10 +310,10 @@ export default function VoicesPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-zinc-100">
-                    上传录音并克隆声音
+                    上传录音或口播视频提取声音
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    音频将自动存入腾讯云 COS 并在声音库中归档
+                    支持直接上传 MP4/MOV 视频，系统将自动抽取音频存入 COS
                   </p>
                 </div>
               </div>
@@ -352,7 +352,7 @@ export default function VoicesPage() {
                       : "border-transparent text-zinc-500 hover:text-zinc-300"
                   )}
                 >
-                  本地音频上传 (MP3/WAV/M4A)
+                  本地音频/视频文件上传
                 </button>
                 <button
                   type="button"
@@ -373,7 +373,7 @@ export default function VoicesPage() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="audio/mp3,audio/wav,audio/m4a,audio/aac,audio/*"
+                    accept="audio/*,video/*,.mp4,.mov,.m4a,.mp3,.wav,.webm,.mkv"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
@@ -399,15 +399,19 @@ export default function VoicesPage() {
                         <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[240px]">
                           已选: {audioFile.name}
                         </span>
-                        <span className="text-[10px] text-zinc-400">点击可更换其他音频文件</span>
+                        <span className="text-[10px] text-zinc-400">
+                          {audioFile.type.startsWith("video/") || audioFile.name.match(/\.(mp4|mov|mkv)$/i)
+                            ? "✨ 检测到视频文件，将自动提取人声音频"
+                            : "点击可更换其他文件"}
+                        </span>
                       </div>
                     ) : (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-zinc-200 block">
-                          点击上传参考音频
+                          点击上传录音或口播视频
                         </span>
                         <span className="text-[10px] text-zinc-400 block mt-0.5">
-                          支持 MP3 / WAV / M4A 格式，建议 5~15 秒单人纯净人声
+                          支持 MP3 / WAV / M4A 音频，或直接上传 MP4 / MOV 视频
                         </span>
                       </div>
                     )}
@@ -466,7 +470,7 @@ export default function VoicesPage() {
                   ) : (
                     <CheckCircle2 className="h-3.5 w-3.5" />
                   )}
-                  <span>{uploading ? "正在保存中..." : "确认添加至声音库"}</span>
+                  <span>{uploading ? "正在提取音频并上传..." : "确认添加至声音库"}</span>
                 </button>
               </div>
             </form>

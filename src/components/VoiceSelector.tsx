@@ -317,7 +317,7 @@ export default function VoiceSelector({
                       : "border-transparent text-zinc-500 hover:text-zinc-300"
                   )}
                 >
-                  本地音频上传 (MP3/WAV/M4A)
+                  本地音频/视频文件上传
                 </button>
                 <button
                   type="button"
@@ -338,7 +338,7 @@ export default function VoiceSelector({
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="audio/mp3,audio/wav,audio/m4a,audio/aac,audio/*"
+                    accept="audio/*,video/*,.mp4,.mov,.m4a,.mp3,.wav,.webm,.mkv"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
@@ -364,15 +364,19 @@ export default function VoiceSelector({
                         <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[240px]">
                           已选: {audioFile.name}
                         </span>
-                        <span className="text-[10px] text-zinc-400">点击可更换其他音频文件</span>
+                        <span className="text-[10px] text-zinc-400">
+                          {audioFile.type.startsWith("video/") || audioFile.name.match(/\.(mp4|mov|mkv)$/i)
+                            ? "✨ 检测到视频文件，将自动提取音频存入声音库"
+                            : "点击可更换其他文件"}
+                        </span>
                       </div>
                     ) : (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-zinc-200 block">
-                          点击上传参考音频
+                          点击上传录音或口播视频
                         </span>
                         <span className="text-[10px] text-zinc-400 block mt-0.5">
-                          支持 MP3 / WAV / M4A 格式，建议 5~15 秒单人纯净人声
+                          支持 MP3/WAV 录音，或直接上传 MP4/MOV 视频（自动提取人声）
                         </span>
                       </div>
                     )}

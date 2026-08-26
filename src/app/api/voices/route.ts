@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import { VoiceStore } from "@/lib/store/voice-store";
 import { getAppConfig } from "@/lib/config";
 import { CosService } from "@/lib/cos";
+import { extractAudioFromMedia } from "@/lib/engine/ffmpeg";
 
 export async function GET() {
   try {
@@ -24,51 +25,87 @@ export async function POST(req: NextRequest) {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;
       const name = (formData.get("name") as string)?.trim() || "未命名自定义音色";
-      const description = (formData.get("description") as string)?.trim() || "用户自定义录制原声";
+      const description = (formData.get("description") as string)?.trim() || "用户自定义原声音频";
 
       if (!file) {
-        return NextResponse.json({ error: "请上传音频文件 (MP3/WAV/M4A)" }, { status: 400 });
+        return NextResponse.json(
+          { error: "请上传音频文件 (MP3/WAV/M4A) 或视频文件 (MP4/MOV)" },
+          { status: 400 }
+        );
       }
 
       const uploadsDir = path.join(process.cwd(), "public", "uploads", "voices");
       fs.mkdirSync(uploadsDir, { recursive: true });
 
-      const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const filePath = path.join(uploadsDir, safeName);
+      const safeBaseName = `${Date.now()}_${file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const ext = path.extname(file.name).toLowerCase() || ".mp3";
+      const tempUploadPath = path.join(uploadsDir, `${safeBaseName}_raw${ext}`);
 
+      // 1. Stream uploaded file to disk
       const nodeReadable = Readable.fromWeb(file.stream() as any);
-      const writeStream = fs.createWriteStream(filePath);
+      const writeStream = fs.createWriteStream(tempUploadPath);
       await pipeline(nodeReadable, writeStream);
 
+      // 2. Extract or convert audio to MP3
+      const isVideo = file.type.startsWith("video/") || [".mp4", ".mov", ".mkv", ".webm", ".avi"].includes(ext);
+      const finalMp3FileName = `${safeBaseName}.mp3`;
+      const finalAudioPath = path.join(uploadsDir, finalMp3FileName);
+
+      let wasExtracted = false;
+      if (isVideo || ext !== ".mp3") {
+        try {
+          await extractAudioFromMedia(tempUploadPath, finalAudioPath);
+          wasExtracted = true;
+          // Remove temp video file to save disk space
+          if (fs.existsSync(tempUploadPath) && tempUploadPath !== finalAudioPath) {
+            try { fs.unlinkSync(tempUploadPath); } catch {}
+          }
+        } catch (e: any) {
+          console.warn("Audio extraction fallback, using original file:", e.message);
+          // If ffmpeg extract fails, fallback to keeping temp file
+          fs.copyFileSync(tempUploadPath, finalAudioPath);
+        }
+      } else {
+        fs.copyFileSync(tempUploadPath, finalAudioPath);
+        if (tempUploadPath !== finalAudioPath) {
+          try { fs.unlinkSync(tempUploadPath); } catch {}
+        }
+      }
+
       const config = getAppConfig();
-      let publicAudioUrl = `/uploads/voices/${safeName}`;
+      let publicAudioUrl = `/uploads/voices/${finalMp3FileName}`;
       let isCos = false;
 
-      // Upload to Tencent Cloud COS if configured
+      // 3. Upload extracted audio to Tencent Cloud COS
       if (CosService.isConfigured()) {
         try {
-          const cosKey = `uploads/voices/${safeName}`;
-          publicAudioUrl = await CosService.uploadFile(filePath, cosKey);
+          const cosKey = `uploads/voices/${finalMp3FileName}`;
+          publicAudioUrl = await CosService.uploadFile(finalAudioPath, cosKey);
           isCos = true;
         } catch (cosErr: any) {
           console.warn("COS upload for voice fallback to local:", cosErr.message);
           const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-          publicAudioUrl = `${baseUrl}/uploads/voices/${safeName}`;
+          publicAudioUrl = `${baseUrl}/uploads/voices/${finalMp3FileName}`;
         }
       } else {
         const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-        publicAudioUrl = `${baseUrl}/uploads/voices/${safeName}`;
+        publicAudioUrl = `${baseUrl}/uploads/voices/${finalMp3FileName}`;
       }
 
       const createdVoice = VoiceStore.create({
         name,
-        description,
+        description: isVideo ? `${description} (由视频自动提取音频)` : description,
         audioUrl: publicAudioUrl,
-        audioPath: filePath,
+        audioPath: finalAudioPath,
         isDefault: false,
       });
 
-      return NextResponse.json({ success: true, voice: createdVoice, isCos });
+      return NextResponse.json({
+        success: true,
+        voice: createdVoice,
+        isCos,
+        extractedFromVideo: isVideo,
+      });
     } else {
       const body = await req.json();
       const { name, audioUrl, description } = body;
