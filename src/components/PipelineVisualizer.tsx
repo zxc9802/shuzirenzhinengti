@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Loader2,
   Activity,
+  CircleDashed,
 } from "lucide-react";
 import { TaskStep } from "@/lib/store/task-store";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,7 @@ interface PipelineVisualizerProps {
   step: TaskStep;
   failedStep?: TaskStep;
   progress: number;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "idle" | "pending" | "processing" | "completed" | "failed";
 }
 
 const STEPS = [
@@ -38,7 +39,7 @@ function stepToIndex(stepKey: TaskStep): number {
   if (stepKey === "mcp_lipsync_submit" || stepKey === "mcp_lipsync_polling") return 3;
   if (stepKey === "finalize") return 4;
   if (stepKey === "done") return 5;
-  return 0;
+  return -1;
 }
 
 export default function PipelineVisualizer({
@@ -48,6 +49,11 @@ export default function PipelineVisualizer({
   status,
 }: PipelineVisualizerProps) {
   const getStepStatus = (index: number) => {
+    // If not started yet, everything is upcoming/idle
+    if (status === "idle" || step === "idle") {
+      return "upcoming";
+    }
+
     if (status === "completed" || step === "done") {
       return "completed";
     }
@@ -65,6 +71,8 @@ export default function PipelineVisualizer({
     return "upcoming";
   };
 
+  const isIdle = status === "idle" || step === "idle";
+
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl">
       <div className="flex items-center justify-between mb-3.5">
@@ -77,6 +85,12 @@ export default function PipelineVisualizer({
               流水线执行进展
             </span>
             <div className="flex items-center gap-2 mt-0.5">
+              {isIdle && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 font-medium">
+                  <CircleDashed className="h-3 w-3 text-zinc-500" />
+                  待命状态 (请上传视频与文案并点击开始)
+                </span>
+              )}
               {status === "processing" && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-blue-300 font-medium">
                   <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
@@ -100,7 +114,7 @@ export default function PipelineVisualizer({
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm font-mono font-bold text-zinc-100 tabular-nums">
-            {progress}%
+            {isIdle ? 0 : progress}%
           </span>
         </div>
       </div>
@@ -110,13 +124,15 @@ export default function PipelineVisualizer({
         <div
           className={cn(
             "h-full transition-all duration-500 rounded-full",
-            status === "failed"
+            isIdle
+              ? "w-0"
+              : status === "failed"
               ? "bg-rose-500 shadow-sm shadow-rose-500/30"
               : status === "completed"
               ? "bg-emerald-500 shadow-sm shadow-emerald-500/30"
               : "bg-gradient-to-r from-blue-600 via-blue-500 to-emerald-500 shadow-sm shadow-blue-500/30"
           )}
-          style={{ width: `${Math.max(progress, 5)}%` }}
+          style={{ width: isIdle ? "0%" : `${Math.max(progress, 5)}%` }}
         />
       </div>
 

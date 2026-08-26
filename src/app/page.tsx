@@ -375,7 +375,7 @@ export default function StudioPage() {
             step={currentTask?.step || "idle"}
             failedStep={currentTask?.failedStep}
             progress={currentTask?.progress || 0}
-            status={currentTask?.status || "pending"}
+            status={currentTask ? currentTask.status : "idle"}
           />
 
           {/* Result Player if completed */}
