@@ -101,12 +101,27 @@ const DEFAULT_CONFIG: AppConfig = {
     "http://localhost:3000",
 
   // Tencent COS
-  cosSecretId: process.env.COS_SECRET_ID || skillDefaults.cosSecretId || "",
-  cosSecretKey: process.env.COS_SECRET_KEY || skillDefaults.cosSecretKey || "",
-  cosBucket: process.env.COS_BUCKET || skillDefaults.cosBucket || "",
-  cosRegion: process.env.COS_REGION || skillDefaults.cosRegion || "ap-guangzhou",
-  cosCustomDomain: process.env.COS_CUSTOM_DOMAIN || skillDefaults.cosCustomDomain || "",
-  cosEnabled: process.env.COS_ENABLED === "true" || Boolean(process.env.COS_SECRET_ID || skillDefaults.cosSecretId),
+  cosSecretId:
+    process.env.COS_SECRET_ID ||
+    skillDefaults.cosSecretId ||
+    "AKIDzBLK8lBQTRIyRq10vfqrhKn5DE3hBVec",
+  cosSecretKey:
+    process.env.COS_SECRET_KEY ||
+    skillDefaults.cosSecretKey ||
+    "HCwUkqjXCj3A6pNr8CmD3oOn49CUiyBV",
+  cosBucket:
+    process.env.COS_BUCKET ||
+    skillDefaults.cosBucket ||
+    "shuziren-1410143389",
+  cosRegion:
+    process.env.COS_REGION ||
+    skillDefaults.cosRegion ||
+    "ap-singapore",
+  cosCustomDomain:
+    process.env.COS_CUSTOM_DOMAIN ||
+    skillDefaults.cosCustomDomain ||
+    "",
+  cosEnabled: true,
 };
 
 const CONFIG_FILE_PATH = path.join(process.cwd(), ".settings.json");
