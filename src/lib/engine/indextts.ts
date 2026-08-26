@@ -194,6 +194,9 @@ export async function generateIndexTTS(
     payload.emotion_vector = [0, 0, 0, 0, 0, 0, 0, 1.0];
   }
 
+  onLog(`[TTS] 👤 发音人音色克隆: ${speakerAudioUrl}`);
+  onLog(`[TTS] 🎭 语气与情绪参考音频: ${payload.emotion_audio_url || "基准"} (情绪强度: ${payload.emotion_alpha})`);
+
   const endpoint = `${baseUrl.replace(/\/$/, "")}/302/index_tts2/task`;
   const createResp = await fetch(endpoint, {
     method: "POST",
