@@ -9,16 +9,19 @@ import Link from "next/link";
 export default function HistoryPage() {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (isManual = false) => {
+    if (isManual) setRefreshing(true);
     try {
-      const resp = await fetch("/api/tasks");
+      const resp = await fetch(`/api/tasks?t=${Date.now()}`);
       const data = await resp.json();
       if (data.tasks) setTasks(data.tasks);
     } catch (e) {
       console.error("Failed to load tasks", e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -26,17 +29,52 @@ export default function HistoryPage() {
     fetchTasks();
   }, []);
 
+  const handleDeleteTask = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("确定要从历史记录中删除该任务吗？")) return;
+    try {
+      const resp = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+      const data = await resp.json();
+      if (data.success) {
+        setTasks((prev) => prev.filter((t) => t.id !== id));
+      }
+    } catch (err) {
+      console.error("Delete task error", err);
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="border-b border-white/[0.08] pb-6">
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
-          <History className="h-8 w-8 text-indigo-400" />
-          <span>制作任务历史与交付归档</span>
-        </h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          查看所有已生成的数字人对口型成片、音轨校验与凭证哈希。
-        </p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/[0.08] pb-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+            <History className="h-8 w-8 text-indigo-400" />
+            <span>制作任务历史与交付归档</span>
+          </h1>
+          <p className="mt-1 text-sm text-zinc-400">
+            查看所有已生成的数字人对口型成片、音轨校验与凭证哈希，数据已自动同步至腾讯云 COS 永久存储。
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => fetchTasks(true)}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.04] hover:bg-white/[0.08] px-3.5 py-2 text-xs font-semibold text-zinc-300 transition-all hover:text-white cursor-pointer"
+          >
+            <History className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-blue-400" : "text-zinc-400"}`} />
+            <span>{refreshing ? "正在刷新..." : "刷新历史记录"}</span>
+          </button>
+
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-md shadow-blue-600/25"
+          >
+            <span>+ 新建制作任务</span>
+          </Link>
+        </div>
       </div>
 
       {loading ? (
@@ -129,6 +167,14 @@ export default function HistoryPage() {
                       <span>在制作台查看</span>
                       <ArrowRight className="h-3 w-3 text-zinc-400" />
                     </Link>
+                    <button
+                      type="button"
+                      title="删除此任务记录"
+                      onClick={(e) => handleDeleteTask(task.id, e)}
+                      className="p-2 rounded-xl border border-white/[0.08] bg-white/[0.04] hover:bg-rose-500/10 text-zinc-500 hover:text-rose-400 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 </div>
               </div>

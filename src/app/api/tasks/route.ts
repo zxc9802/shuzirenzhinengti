@@ -3,7 +3,7 @@ import { TaskStore } from "@/lib/store/task-store";
 import { runDigitalHumanPipeline } from "@/lib/engine/pipeline";
 
 export async function GET() {
-  const tasks = TaskStore.getAll();
+  const tasks = await TaskStore.getAllAsync();
   return NextResponse.json({ tasks });
 }
 

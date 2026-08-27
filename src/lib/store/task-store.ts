@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { CosService } from "../cos";
 
 export type TaskStep =
   | "idle"
@@ -59,8 +60,10 @@ export interface TaskItem {
 
 const STORE_PATH = path.join(process.cwd(), ".tasks.json");
 const BACKUP_STORE_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".tasks.json");
+const COS_TASKS_KEY = "_system/tasks.json";
 const memoryTasks = new Map<string, TaskItem>();
 const subscribers = new Map<string, Set<(task: TaskItem) => void>>();
+let hasLoadedFromCloud = false;
 
 function reloadFromDisk() {
   try {
@@ -99,12 +102,54 @@ function persistStore() {
       fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_STORE_PATH, content, "utf-8");
     } catch {}
+
+    // Mirror to Tencent Cloud COS for 100% persistent cloud recovery across container restarts
+    if (CosService.isConfigured()) {
+      CosService.saveJsonToCos(COS_TASKS_KEY, arr).catch((err) => {
+        console.warn("TaskStore COS sync error:", err.message);
+      });
+    }
   } catch (e) {
     console.error("Failed to persist tasks store", e);
   }
 }
 
 export const TaskStore = {
+  async getAllAsync(): Promise<TaskItem[]> {
+    reloadFromDisk();
+
+    // If local memory is empty or not yet synced with cloud, fetch from Tencent Cloud COS
+    if ((memoryTasks.size === 0 || !hasLoadedFromCloud) && CosService.isConfigured()) {
+      try {
+        const cloudTasks = await CosService.getJsonFromCos<TaskItem[]>(COS_TASKS_KEY);
+        if (cloudTasks && Array.isArray(cloudTasks) && cloudTasks.length > 0) {
+          for (const t of cloudTasks) {
+            if (!memoryTasks.has(t.id)) {
+              memoryTasks.set(t.id, t);
+            }
+          }
+          hasLoadedFromCloud = true;
+          persistStore();
+        }
+      } catch (err: any) {
+        console.warn("Failed to load tasks from cloud:", err.message);
+      }
+    }
+
+    return Array.from(memoryTasks.values()).sort(
+      (a, b) => b.createdAt - a.createdAt
+    );
+  },
+
+  async getAsync(id: string): Promise<TaskItem | undefined> {
+    reloadFromDisk();
+    const local = memoryTasks.get(id);
+    if (local) return local;
+
+    await this.getAllAsync();
+    return memoryTasks.get(id);
+  },
+
   get(id: string): TaskItem | undefined {
     reloadFromDisk();
     return memoryTasks.get(id);
