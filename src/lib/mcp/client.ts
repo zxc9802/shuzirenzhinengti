@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { HeyGenDirectMcpProvider } from "./heygen-provider";
 
 export interface McpToolInfo {
   name: string;
@@ -55,12 +56,12 @@ export class McpClientManager {
       this.status = {
         connected: true,
         transportType: "direct",
-        serverName: "HeyGen Internal MCP Provider",
-        serverVersion: "1.0.0",
+        serverName: "HeyGen Native MCP Engine",
+        serverVersion: "2.0.0",
         tools: [
           {
-            name: "heygen_create_lipsync",
-            description: "Create a precision digital human lip-sync job on HeyGen",
+            name: "create_lipsync",
+            description: "Create precision lip-sync job calling HeyGen Cloud Engine directly using Subscription Credits",
             inputSchema: {
               type: "object",
               properties: {
@@ -73,8 +74,8 @@ export class McpClientManager {
             },
           },
           {
-            name: "heygen_get_lipsync",
-            description: "Get status and download URL of a HeyGen lip-sync job",
+            name: "get_lipsync",
+            description: "Get status and output video URL of a HeyGen lip-sync job",
             inputSchema: {
               type: "object",
               properties: {
@@ -84,7 +85,7 @@ export class McpClientManager {
             },
           },
           {
-            name: "heygen_list_lipsyncs",
+            name: "list_lipsyncs",
             description: "List recent HeyGen lip-sync jobs to prevent duplicate billing",
             inputSchema: {
               type: "object",
@@ -92,6 +93,11 @@ export class McpClientManager {
                 limit: { type: "number", default: 20 },
               },
             },
+          },
+          {
+            name: "get_remaining_quota",
+            description: "Query HeyGen subscription plan details and remaining Premium Credits",
+            inputSchema: { type: "object", properties: {} },
           },
         ],
       };
@@ -102,7 +108,7 @@ export class McpClientManager {
       this.client = new Client(
         {
           name: "digital-human-lipsync-web-client",
-          version: "1.0.0",
+          version: "2.0.0",
         },
         {
           capabilities: {},
@@ -159,7 +165,27 @@ export class McpClientManager {
     }
 
     if (this.status.transportType === "direct" || !this.client) {
-      throw new Error("Direct provider call should be handled by adapter");
+      if (name === "create_lipsync" || name === "heygen_create_lipsync") {
+        const res = await HeyGenDirectMcpProvider.createLipsync({
+          videoUrl: args.video_url,
+          audioUrl: args.audio_url,
+          title: args.title,
+          mode: args.mode || "precision",
+        });
+        return { content: [{ type: "text", text: JSON.stringify(res) }] };
+      }
+      if (name === "get_lipsync" || name === "heygen_get_lipsync") {
+        const res = await HeyGenDirectMcpProvider.getLipsyncStatus(args.lipsync_id);
+        return { content: [{ type: "text", text: JSON.stringify(res) }] };
+      }
+      if (name === "list_lipsyncs" || name === "heygen_list_lipsyncs") {
+        return { content: [{ type: "text", text: JSON.stringify({ list: [] }) }] };
+      }
+      if (name === "get_remaining_quota" || name === "get_quota") {
+        const res = await HeyGenDirectMcpProvider.getQuota();
+        return { content: [{ type: "text", text: JSON.stringify(res) }] };
+      }
+      throw new Error(`Direct MCP provider unknown tool: ${name}`);
     }
 
     const response = await this.client.callTool({

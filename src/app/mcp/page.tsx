@@ -14,6 +14,9 @@ import {
   ArrowRight,
   Sparkles,
   Zap,
+  Key,
+  ShieldCheck,
+  CreditCard,
 } from "lucide-react";
 import { McpConnectionStatus, McpToolInfo } from "@/lib/mcp/client";
 
@@ -26,8 +29,19 @@ export default function McpPage() {
   const [execResult, setExecResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // HeyGen Subscription Auth State
+  const [heygenToken, setHeygenToken] = useState("");
+  const [verifyingAuth, setVerifyingAuth] = useState(false);
+  const [quotaInfo, setQuotaInfo] = useState<{
+    success: boolean;
+    quota?: number;
+    remainingQuota?: number;
+    planName?: string;
+    error?: string;
+  } | null>(null);
+
   // Transport settings
-  const [transport, setTransport] = useState<"direct" | "sse" | "stdio">("stdio");
+  const [transport, setTransport] = useState<"direct" | "sse" | "stdio">("direct");
   const [serverUrl, setServerUrl] = useState("http://localhost:8000/sse");
   const [command, setCommand] = useState("node");
   const [commandArgs, setCommandArgs] = useState("scripts/heygen_mcp_server.mjs");
@@ -35,12 +49,18 @@ export default function McpPage() {
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const resp = await fetch("/api/mcp/tools");
-      const data = await resp.json();
+      const [mcpResp, authResp] = await Promise.all([
+        fetch("/api/mcp/tools"),
+        fetch("/api/mcp/heygen/auth"),
+      ]);
+      const data = await mcpResp.json();
       setStatus(data.status);
       if (data.status?.tools?.length > 0 && !selectedTool) {
         setSelectedTool(data.status.tools[0].name);
       }
+
+      const authData = await authResp.json();
+      setQuotaInfo(authData);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -51,6 +71,34 @@ export default function McpPage() {
   useEffect(() => {
     fetchStatus();
   }, []);
+
+  const handleVerifyAndSaveAuth = async () => {
+    if (!heygenToken.trim()) {
+      setError("请输入 HeyGen 账号套餐 Token / 凭证");
+      return;
+    }
+    setVerifyingAuth(true);
+    setError(null);
+
+    try {
+      const resp = await fetch("/api/mcp/heygen/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: heygenToken.trim() }),
+      });
+      const data = await resp.json();
+      setQuotaInfo(data);
+      if (data.success) {
+        await fetchStatus();
+      } else {
+        setError(data.error || "HeyGen 授权校验未通过");
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setVerifyingAuth(false);
+    }
+  };
 
   const handleConnect = async () => {
     setLoading(true);
@@ -81,8 +129,8 @@ export default function McpPage() {
       setToolArgs(
         JSON.stringify(
           {
-            video_url: "https://your-domain.com/video.mp4",
-            audio_url: "https://your-domain.com/audio.wav",
+            video_url: "https://shuziren-1410143389.cos.ap-singapore.myqcloud.com/uploads/videos/sample.mp4",
+            audio_url: "https://shuziren-1410143389.cos.ap-singapore.myqcloud.com/jobs/sample.wav",
             title: "lipsync_sample_task",
             mode: "precision",
           },
@@ -90,7 +138,7 @@ export default function McpPage() {
           2
         )
       );
-    } else if (tool.name.includes("get")) {
+    } else if (tool.name.includes("get_lipsync")) {
       setToolArgs(
         JSON.stringify(
           {
@@ -153,11 +201,11 @@ export default function McpPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/[0.08] pb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
-            <Cpu className="h-8 w-8 text-indigo-400" />
-            <span>MCP (Model Context Protocol) 客户端控制台</span>
+            <Cpu className="h-8 w-8 text-blue-400" />
+            <span>HeyGen MCP 套餐授权与控制台</span>
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            通过标准 MCP 协议管道直接与 HeyGen 对口型服务端通信，无需配置云端 API Key。
+            通过 Model Context Protocol (MCP) 标准管道直接调度 HeyGen 订阅套餐，扣除账号 Premium Credits 生成高精口型。
           </p>
         </div>
 
@@ -166,9 +214,79 @@ export default function McpPage() {
           disabled={loading}
           className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/[0.08] hover:text-white transition-all shadow-sm active:scale-[0.98]"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-indigo-400" : ""}`} />
-          刷新连接状态
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-blue-400" : ""}`} />
+          刷新 MCP 状态
         </button>
+      </div>
+
+      {/* Top Banner: HeyGen Subscription Plan Authorization Card */}
+      <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-900/20 via-[#10121a] to-blue-950/30 p-6 backdrop-blur-xl shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/20 border border-blue-500/30 text-blue-400">
+                <CreditCard className="h-4 w-4" />
+              </span>
+              <h2 className="text-base font-bold text-white">HeyGen 账号套餐与授权凭证</h2>
+              {quotaInfo?.success ? (
+                <span className="flex items-center gap-1 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  套餐授权生效中
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+                  待挂接套餐
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-zinc-300 max-w-xl">
+              直接填入您开通了 HeyGen 套餐的账号 Token，系统将通过 MCP 协议直接调用官方 Precision 引擎，扣除套餐内点数。
+            </p>
+
+            {quotaInfo?.success && (
+              <div className="flex items-center gap-4 pt-1 flex-wrap text-xs">
+                <span className="text-zinc-400">
+                  套餐类型: <strong className="text-white">{quotaInfo.planName || "标准套餐"}</strong>
+                </span>
+                <span className="text-zinc-400">
+                  剩余点数: <strong className="text-emerald-400 font-mono text-sm">{quotaInfo.remainingQuota ?? 0} Credits</strong>
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 lg:min-w-[420px]">
+            <input
+              type="password"
+              value={heygenToken}
+              onChange={(e) => setHeygenToken(e.target.value)}
+              placeholder="输入您的 HeyGen 账号授权 Token / Key..."
+              className="flex-1 rounded-xl border border-white/[0.1] bg-black/60 px-3.5 py-2.5 text-xs font-mono text-zinc-200 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleVerifyAndSaveAuth}
+              disabled={verifyingAuth}
+              className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-md transition-all cursor-pointer whitespace-nowrap"
+            >
+              {verifyingAuth ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-3.5 w-3.5" />
+              )}
+              <span>验证并挂接套餐</span>
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+            <span>{error}</span>
+          </div>
+        )}
       </div>
 
       {/* Connection Config & Status */}
@@ -178,7 +296,7 @@ export default function McpPage() {
           <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
               <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider flex items-center gap-2">
-                <Server className="h-4 w-4 text-indigo-400" />
+                <Server className="h-4 w-4 text-blue-400" />
                 MCP 通信传输配置
               </span>
               {status?.connected ? (
@@ -199,7 +317,18 @@ export default function McpPage() {
               <label className="text-xs font-medium text-zinc-300">
                 协议通信模式
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTransport("direct")}
+                  className={`rounded-xl border p-2.5 text-xs font-semibold transition-all ${
+                    transport === "direct"
+                      ? "border-blue-500/80 bg-blue-500/20 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
+                      : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                  }`}
+                >
+                  原生内置 MCP
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -207,24 +336,24 @@ export default function McpPage() {
                     setCommand("node");
                     setCommandArgs("scripts/heygen_mcp_server.mjs");
                   }}
-                  className={`rounded-xl border p-3 text-xs font-semibold transition-all ${
+                  className={`rounded-xl border p-2.5 text-xs font-semibold transition-all ${
                     transport === "stdio"
-                      ? "border-indigo-500/80 bg-indigo-500/20 text-indigo-200 shadow-sm shadow-indigo-500/10 ring-1 ring-indigo-500/30"
+                      ? "border-blue-500/80 bg-blue-500/20 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
                       : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                   }`}
                 >
-                  Stdio (本地自包含)
+                  Stdio 子进程
                 </button>
                 <button
                   type="button"
                   onClick={() => setTransport("sse")}
-                  className={`rounded-xl border p-3 text-xs font-semibold transition-all ${
+                  className={`rounded-xl border p-2.5 text-xs font-semibold transition-all ${
                     transport === "sse"
-                      ? "border-indigo-500/80 bg-indigo-500/20 text-indigo-200 shadow-sm shadow-indigo-500/10 ring-1 ring-indigo-500/30"
+                      ? "border-blue-500/80 bg-blue-500/20 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
                       : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                   }`}
                 >
-                  SSE / HTTP (远程服务)
+                  SSE 远程端点
                 </button>
               </div>
             </div>
@@ -240,7 +369,7 @@ export default function McpPage() {
                   value={serverUrl}
                   onChange={(e) => setServerUrl(e.target.value)}
                   placeholder="http://localhost:8000/sse"
-                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                 />
               </div>
             )}
@@ -249,26 +378,24 @@ export default function McpPage() {
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-zinc-300">
-                    Stdio 启动程序 (Command)
+                    启动命令 (Command)
                   </label>
                   <input
                     type="text"
                     value={command}
                     onChange={(e) => setCommand(e.target.value)}
-                    placeholder="node"
-                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-zinc-300">
-                    执行参数 (Arguments)
+                    命令参数 (Args)
                   </label>
                   <input
                     type="text"
                     value={commandArgs}
                     onChange={(e) => setCommandArgs(e.target.value)}
-                    placeholder="scripts/heygen_mcp_server.mjs"
-                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -277,116 +404,112 @@ export default function McpPage() {
             <button
               onClick={handleConnect}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 p-3 text-xs font-bold text-white transition-all shadow-md shadow-indigo-600/25 active:scale-[0.98]"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 p-3 text-xs font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
               ) : (
-                <CheckCircle2 className="h-4 w-4" />
+                <Zap className="h-4 w-4" />
               )}
-              <span>重新连接并发现工具</span>
+              <span>重新初始化 MCP 连接</span>
             </button>
           </div>
 
-          {/* Tools Explorer */}
+          {/* Tools List */}
           <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-4">
             <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="h-4 w-4 text-purple-400" />
-              已发现 MCP 工具 ({status?.tools.length || 0})
+              <Code2 className="h-4 w-4 text-blue-400" />
+              已发现的 MCP Tools ({status?.tools?.length || 0})
             </span>
 
-            <div className="space-y-2.5">
-              {status?.tools.map((tool) => (
-                <div
-                  key={tool.name}
-                  onClick={() => handleToolSelect(tool)}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                    selectedTool === tool.name
-                      ? "border-indigo-500/80 bg-indigo-500/15 text-white ring-1 ring-indigo-500/30"
-                      : "border-white/[0.06] bg-black/30 text-zinc-400 hover:border-white/[0.12] hover:text-zinc-200"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold text-indigo-300">
-                      {tool.name}
-                    </span>
-                    <ArrowRight className="h-3.5 w-3.5 opacity-60 text-indigo-400" />
-                  </div>
-                  {tool.description && (
-                    <p className="mt-1 text-xs text-zinc-400 leading-snug">
-                      {tool.description}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
+            {status?.tools && status.tools.length > 0 ? (
+              <div className="space-y-2">
+                {status.tools.map((t) => {
+                  const isSelected = selectedTool === t.name;
+                  return (
+                    <button
+                      key={t.name}
+                      onClick={() => handleToolSelect(t)}
+                      className={`w-full text-left p-3.5 rounded-xl border transition-all flex flex-col gap-1 ${
+                        isSelected
+                          ? "border-blue-500 bg-blue-500/15 text-white ring-1 ring-blue-500/40"
+                          : "border-white/[0.05] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs font-bold text-blue-300">
+                          {t.name}
+                        </span>
+                        {isSelected && (
+                          <span className="text-[10px] bg-blue-500/30 text-blue-200 px-2 py-0.5 rounded-md font-mono">
+                            已选择
+                          </span>
+                        )}
+                      </div>
+                      {t.description && (
+                        <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+                          {t.description}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-xs text-zinc-500">
+                暂未发现可用 Tools，请检查 MCP 连接。
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right: Interactive MCP Tool Runner & Inspector */}
+        {/* Right: Interactive MCP Tool Tester */}
         <div className="lg:col-span-7 space-y-6">
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-4">
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0f111a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
-              <div className="flex items-center gap-2">
-                <Code2 className="h-4 w-4 text-indigo-400" />
-                <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">
-                  MCP Tool 执行器:{" "}
-                  <span className="font-mono text-indigo-300 normal-case">{selectedTool}</span>
-                </span>
-              </div>
-              <button
-                onClick={handleExecuteTool}
-                disabled={executing}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] cursor-pointer"
-              >
-                {executing ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5 fill-white" />
-                )}
-                <span>执行 MCP 调用</span>
-              </button>
+              <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider flex items-center gap-2">
+                <Play className="h-4 w-4 text-emerald-400" />
+                MCP 调试调用台: <span className="font-mono text-blue-400">{selectedTool}</span>
+              </span>
             </div>
 
-            {/* Tool Schema & Arguments Editor */}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <label className="text-xs font-medium text-zinc-300">
-                JSON 调用入参 (Arguments)
+                工具入参 JSON Payload
               </label>
               <textarea
-                rows={7}
                 value={toolArgs}
                 onChange={(e) => setToolArgs(e.target.value)}
-                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3.5 font-mono text-xs text-indigo-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                rows={7}
+                className="w-full rounded-xl border border-white/[0.08] bg-black/50 p-4 font-mono text-xs text-zinc-200 focus:border-blue-500 focus:outline-none"
               />
             </div>
 
-            {/* Error Message */}
-            {error && (
-              <div className="flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/20 p-3 text-xs text-rose-300">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-                <span>{error}</span>
+            <button
+              onClick={handleExecuteTool}
+              disabled={executing || !status?.connected}
+              className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+            >
+              {executing ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 fill-white" />
+              )}
+              <span>执行 MCP Tool 调用</span>
+            </button>
+
+            {/* Execution Result Terminal */}
+            {execResult && (
+              <div className="space-y-2 mt-4">
+                <label className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  调用返回结果 (JSON Response)
+                </label>
+                <div className="rounded-xl border border-white/[0.08] bg-black/80 p-4 font-mono text-xs text-zinc-300 overflow-x-auto max-h-96">
+                  <pre>{JSON.stringify(execResult, null, 2)}</pre>
+                </div>
               </div>
             )}
-
-            {/* Execution Result */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-                <Terminal className="h-3.5 w-3.5 text-indigo-400" />
-                MCP 响应输出 (JSON-RPC Output)
-              </label>
-              <div className="rounded-xl border border-white/[0.08] bg-[#0c0e14] p-4 font-mono text-xs max-h-72 overflow-y-auto">
-                {execResult ? (
-                  <pre className="text-emerald-400 whitespace-pre-wrap leading-relaxed">
-                    {JSON.stringify(execResult, null, 2)}
-                  </pre>
-                ) : (
-                  <div className="text-zinc-600 italic">
-                    点击右上角“执行 MCP 调用”按钮发起调试...
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </div>

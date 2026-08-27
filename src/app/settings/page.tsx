@@ -80,6 +80,14 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHeyGenKey, setShowHeyGenKey] = useState(false);
+  const [testingHeyGen, setTestingHeyGen] = useState(false);
+  const [heygenTestResult, setHeygenTestResult] = useState<{
+    success: boolean;
+    quota?: number;
+    remainingQuota?: number;
+    planName?: string;
+    error?: string;
+  } | null>(null);
 
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -183,6 +191,31 @@ export default function SettingsPage() {
       }
     } catch (err) {
       console.error("Delete voice error", err);
+    }
+  };
+
+  const handleTestHeyGen = async () => {
+    if (!config.heygenApiKey?.trim()) {
+      setHeygenTestResult({ success: false, error: "请先输入 HeyGen 套餐 Token" });
+      return;
+    }
+    setTestingHeyGen(true);
+    setHeygenTestResult(null);
+    try {
+      const resp = await fetch("/api/mcp/heygen/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: config.heygenApiKey.trim(),
+          baseUrl: config.heygenApiBaseUrl || "https://api.heygen.com",
+        }),
+      });
+      const data = await resp.json();
+      setHeygenTestResult(data);
+    } catch (err: any) {
+      setHeygenTestResult({ success: false, error: err.message || "请求异常" });
+    } finally {
+      setTestingHeyGen(false);
     }
   };
 
@@ -513,6 +546,44 @@ export default function SettingsPage() {
                   className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
                 />
               </div>
+            </div>
+
+            {/* Test HeyGen Subscription Button & Result */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={handleTestHeyGen}
+                disabled={testingHeyGen || !config.heygenApiKey}
+                className="flex items-center gap-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 px-4 py-2 text-xs font-bold text-blue-300 transition-all cursor-pointer disabled:opacity-40"
+              >
+                {testingHeyGen ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Zap className="h-3.5 w-3.5 text-blue-400" />
+                )}
+                <span>验证 HeyGen 套餐授权与剩余点数</span>
+              </button>
+
+              {heygenTestResult && (
+                <div
+                  className={`mt-2.5 flex items-center gap-2 rounded-xl p-3 text-xs ${
+                    heygenTestResult.success
+                      ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
+                      : "bg-rose-500/10 border border-rose-500/30 text-rose-300"
+                  }`}
+                >
+                  {heygenTestResult.success ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                  )}
+                  <span>
+                    {heygenTestResult.success
+                      ? `验证成功！当前套餐: ${heygenTestResult.planName || "标准套餐"} | 剩余额度: ${heygenTestResult.remainingQuota ?? 0} Credits`
+                      : `验证未通过: ${heygenTestResult.error || "鉴权失败"}`}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div>
