@@ -64,11 +64,11 @@ export default function PlayerComparison({
                 对口型成片交付与核验
               </h3>
               <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                HeyGen Precision 完成
+                高精度唇形对齐 完成
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-0.5">
-              已将对口型画面与 IndexTTS-2 原声音轨无损混流封装
+              已将高保真对口型画面与专属原声音轨无损混流封装
             </p>
           </div>
         </div>
@@ -158,7 +158,7 @@ export default function PlayerComparison({
               数字人对口型成片 (Final Delivery)
             </span>
             <span className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] text-emerald-300 font-semibold">
-              IndexTTS-2 原声音轨绑定
+              高保真原声音轨绑定
             </span>
           </div>
           <div className="relative aspect-[9/16] md:aspect-video w-full overflow-hidden rounded-2xl bg-black border border-emerald-500/40 shadow-xl flex items-center justify-center">

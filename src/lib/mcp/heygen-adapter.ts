@@ -62,7 +62,7 @@ export class HeyGenMcpAdapter {
     const { videoUrl, audioUrl, submissionTitle, onLog = () => {} } = options;
     const mcpManager = McpClientManager.getInstance();
 
-    onLog(`[MCP Client] 正在连接 HeyGen MCP 服务端 (${config.heygenMcpTransport.toUpperCase()})...`);
+    onLog(`[MCP Client] 正在连接高精度口型驱动 MCP 服务端 (${config.heygenMcpTransport.toUpperCase()})...`);
 
     // Ensure connection to MCP Server
     if (!mcpManager.getStatus().connected) {
@@ -119,7 +119,7 @@ export class HeyGenMcpAdapter {
 
     // 2. Submit lipsync task via MCP Tool: create_lipsync
     if (!lipsyncId) {
-      onLog(`[MCP Client] 正在调用 MCP 工具 (${createToolName}) 创建 Precision 对口型任务...`);
+      onLog(`[MCP Client] 正在调用 MCP 工具 (${createToolName}) 创建高精度对口型任务...`);
       const createPayload = {
         video_url: videoUrl,
         audio_url: audioUrl,
@@ -149,7 +149,7 @@ export class HeyGenMcpAdapter {
       throw new Error(`无法从 MCP ${createToolName} 返回中解析出有效的 lipsync_id`);
     }
 
-    onLog(`[MCP Client] HeyGen 对口型任务已由 MCP 建立 (ID: ${lipsyncId})，开始轮询进度...`);
+    onLog(`[MCP Client] 高精度唇形驱动任务已建立 (ID: ${lipsyncId})，开始轮询进度...`);
 
     // 3. Poll for completion via MCP Tool: get_lipsync
     const pollDeadline = Date.now() + 3600 * 1000;
@@ -186,7 +186,7 @@ export class HeyGenMcpAdapter {
           parsed?.error?.message ||
           parsed?.error ||
           parsed?.data?.error ||
-          "HeyGen 对口型处理失败";
+          "高精度对口型处理失败";
         throw new Error(`[MCP Client] ${errorMsg}`);
       } else {
         if (pollCount % 3 === 0) {

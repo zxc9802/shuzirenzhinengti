@@ -70,8 +70,8 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       )}s | 帧率 ${originalProbe.fps}fps | 含音频轨: ${originalProbe.hasAudio ? "是" : "否"}`
     );
 
-    // 2. Step: IndexTTS-2 Speech Synthesis
-    log("🗣️ 第一步: 正在使用 IndexTTS-2 合成中文定制配音 (根据字数可能需要 1~3 分钟)...");
+    // 2. Step: Speech Synthesis
+    log("🗣️ 第一步: 正在合成定制原声配音 (根据字数可能需要 1~3 分钟)...");
     const speakerUrl =
       task.inputs.speakerAudioUrl ||
       config.indexttsSpeakerAudioUrl ||
@@ -93,7 +93,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
     });
 
     const sha256Audio = await sha256File(ttsResult.finalWavPath);
-    log(`IndexTTS-2 配音就绪，SHA-256: ${sha256Audio.slice(0, 16)}...`, "success");
+    log(`专属原声音轨已就绪，音频指纹: ${sha256Audio.slice(0, 16)}...`, "success");
 
     // 3. Step: Media Preparation & Normalization
     currentStep = "media_prep";
@@ -115,11 +115,11 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
     log(
       `画面适配完成: 分辨率 ${prepResult.width}x${prepResult.height}, 时长 ${prepResult.duration.toFixed(
         2
-      )}s, SHA-256: ${sha256Video.slice(0, 16)}...`,
+      )}s, 视频指纹: ${sha256Video.slice(0, 16)}...`,
       "success"
     );
 
-    // 4. Step: MCP Preflight and HeyGen Lip-sync submission
+    // 4. Step: MCP Preflight and Lip-sync submission
     currentStep = "mcp_preflight";
     TaskStore.update(taskId, {
       step: "mcp_preflight",
@@ -152,7 +152,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
         );
         log("✅ 预处理音视频直链已就绪 (腾讯云 COS)", "success");
       } catch (cosErr: any) {
-        console.warn("COS sync for HeyGen inputs failed, fallback to baseUrl:", cosErr.message);
+        console.warn("COS sync for inputs failed, fallback to baseUrl:", cosErr.message);
       }
     }
 
@@ -161,7 +161,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       step: "mcp_lipsync_submit",
       progress: 65,
     });
-    log("🔌 第四步: 通过 MCP 客户端向 HeyGen 提交对口型请求...");
+    log("🔌 第四步: 正在调度 AI 高精度唇形驱动引擎...");
 
     // Execute through MCP Adapter
     const heygenResult = await HeyGenMcpAdapter.executeLipsync(
@@ -174,13 +174,13 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       jobDir
     );
 
-    // 5. Step: Finalize and Remux with exact IndexTTS audio
+    // 5. Step: Finalize and Remux with exact audio
     currentStep = "finalize";
     TaskStore.update(taskId, {
       step: "finalize",
       progress: 85,
     });
-    log("🎧 第五步: 正在将生成的视频与原声 IndexTTS-2 WAV 无损混流封装...");
+    log("🎧 第五步: 正在将生成的对口型视频与原声 WAV 音轨无损混流封装...");
 
     const heygenDownloadedPath = path.join(jobDir, "heygen-result-raw.mp4");
     const finalVideoPath = path.join(jobDir, "final.mp4");
