@@ -1,10 +1,12 @@
-import {
-  type OAuthClientProvider,
-  type OAuthClientInformationMixed,
-  type OAuthDiscoveryState,
-  type OAuthTokens,
+import type {
+  OAuthClientProvider,
+  OAuthDiscoveryState,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type {
+  OAuthClientInformationMixed,
+  OAuthClientMetadata,
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
   HEYGEN_MCP_RESOURCE,
   buildHeyGenCallbackUrl,

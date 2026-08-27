@@ -1,10 +1,10 @@
 import fs from "fs";
 import path from "path";
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
   OAuthClientInformationMixed,
-  OAuthDiscoveryState,
   OAuthTokens,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 
 export const HEYGEN_REMOTE_MCP_URL = "https://mcp.heygen.com/mcp/v1";
 export const HEYGEN_MCP_RESOURCE = "https://mcp.heygen.com";
