@@ -1,5 +1,6 @@
 import COS from "cos-nodejs-sdk-v5";
 import fs from "fs";
+import path from "path";
 import { getAppConfig } from "./config";
 
 let cosInstance: COS | null = null;
@@ -37,6 +38,40 @@ export const CosService = {
       config.cosBucket &&
       config.cosRegion
     );
+  },
+
+  async getDownloadUrl(key: string, filename?: string, expires = 3600): Promise<string> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    const cleanKey = key.replace(/^\/+/, "");
+    const downloadName = filename || path.basename(cleanKey);
+
+    if (!cos || !config.cosBucket || !config.cosRegion) {
+      return this.getPublicUrl(cleanKey);
+    }
+
+    return new Promise((resolve, reject) => {
+      cos.getObjectUrl(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+          Method: "GET",
+          Sign: true,
+          Expires: expires,
+          Query: {
+            "response-content-disposition": `attachment; filename="${downloadName}"`,
+          },
+        },
+        (err, data) => {
+          if (err || !data?.Url) {
+            resolve(this.getPublicUrl(cleanKey));
+          } else {
+            resolve(data.Url);
+          }
+        }
+      );
+    });
   },
 
   getPublicUrl(key: string): string {

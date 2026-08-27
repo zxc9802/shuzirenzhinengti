@@ -218,10 +218,17 @@ export async function generateIndexTTS(
     throw new Error(`IndexTTS-2 未返回 task_id: ${JSON.stringify(createJson)}`);
   }
 
-  onLog(`TTS 任务已创建 (TaskID: ${taskId})，正在轮询合成进度...`);
-
-  // Poll for completion
-  const deadline = Date.now() + 300 * 1000;
+  // Poll for completion. Long scripts need more than the old 5-minute cap.
+  const ttsTimeoutMs = Math.min(
+    Math.max(12 * 60 * 1000, Math.ceil(text.trim().length * 1200)),
+    45 * 60 * 1000
+  );
+  onLog(
+    `TTS 任务已创建 (TaskID: ${taskId})，正在轮询合成进度（最长等待 ${Math.round(
+      ttsTimeoutMs / 60000
+    )} 分钟）...`
+  );
+  const deadline = Date.now() + ttsTimeoutMs;
   let audioUrl: string | null = null;
 
   while (Date.now() < deadline) {

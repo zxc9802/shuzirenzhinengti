@@ -237,6 +237,106 @@ export async function prepareSourceVideo(
   };
 }
 
+export async function sliceMedia(params: {
+  inputPath: string;
+  outputPath: string;
+  startSeconds: number;
+  durationSeconds: number;
+  kind: "video" | "audio";
+}): Promise<void> {
+  const { inputPath, outputPath, startSeconds, durationSeconds, kind } = params;
+  if (!fs.existsSync(inputPath)) {
+    throw new Error(`Slice source not found: ${inputPath}`);
+  }
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-ss",
+    startSeconds.toFixed(3),
+    "-i",
+    inputPath,
+    "-t",
+    durationSeconds.toFixed(3),
+  ];
+
+  if (kind === "video") {
+    args.push(
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "fast",
+      "-crf",
+      "18",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart"
+    );
+  } else {
+    args.push("-vn", "-c:a", "pcm_s16le");
+  }
+
+  args.push(outputPath);
+  await execCommand("ffmpeg", args);
+}
+
+export async function concatVideos(
+  inputPaths: string[],
+  outputPath: string
+): Promise<void> {
+  if (inputPaths.length === 0) {
+    throw new Error("没有可拼接的视频分段");
+  }
+  if (inputPaths.length === 1) {
+    fs.copyFileSync(inputPaths[0], outputPath);
+    return;
+  }
+
+  const listPath = `${outputPath}.concat.txt`;
+  const listBody = inputPaths
+    .map((p) => `file '${p.replace(/'/g, "'\\''")}'`)
+    .join("\n");
+  fs.writeFileSync(listPath, listBody, "utf-8");
+
+  try {
+    await execCommand("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listPath,
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "fast",
+      "-crf",
+      "18",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ]);
+  } finally {
+    try {
+      fs.unlinkSync(listPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export async function finalizeVideo(
   heygenVideoPath: string,
   exactWavPath: string,

@@ -93,7 +93,10 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
     });
 
     const sha256Audio = await sha256File(ttsResult.finalWavPath);
-    log(`专属原声音轨已就绪，音频指纹: ${sha256Audio.slice(0, 16)}...`, "success");
+    log(
+      `专属原声音轨已就绪，时长 ${ttsResult.selectedDuration.toFixed(1)}s，音频指纹: ${sha256Audio.slice(0, 16)}...`,
+      "success"
+    );
 
     // 3. Step: Media Preparation & Normalization
     currentStep = "media_prep";

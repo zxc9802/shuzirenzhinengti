@@ -322,6 +322,11 @@ export default function StudioPage() {
               placeholder="请输入需要进行语音合成与口型匹配的完整中文文案... (例如：大家好，今天给大家分享一款超好用的 AI 数字人智能工具)"
               className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3.5 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all disabled:opacity-50 font-normal leading-relaxed"
             />
+            {scriptText.trim().length >= 400 && (
+              <p className="mt-2 text-[11px] leading-relaxed text-amber-300/90">
+                文案约 {scriptText.trim().length} 字，口播大概 {Math.max(1, Math.round(scriptText.trim().length / 4.4 / 60))} 分钟。超过 90 秒会自动分段对口型再拼接，不会因为单次轮询超时整段失败。
+              </p>
+            )}
           </div>
 
           {/* Card 3: Lipsync engine */}

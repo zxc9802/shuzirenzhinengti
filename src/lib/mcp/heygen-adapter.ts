@@ -1,7 +1,8 @@
 import { McpClientManager, McpToolInfo } from "./client";
 import { getAppConfig } from "../config";
 import { hasHeyGenOAuthTokens } from "./heygen-oauth-store";
-import fs from "fs";
+import { pollTimeoutMs } from "../engine/lipsync-chunks";
+import { downloadFileToDisk } from "../engine/download-file";
 import path from "path";
 
 export interface HeyGenSubmissionOptions {
@@ -157,7 +158,7 @@ export class HeyGenMcpAdapter {
     onLog(`[MCP Client] 高精度唇形驱动任务已建立 (ID: ${lipsyncId})，开始轮询进度...`);
 
     // 3. Poll for completion via MCP Tool: get_lipsync
-    const pollDeadline = Date.now() + 3600 * 1000;
+    const pollDeadline = Date.now() + pollTimeoutMs(180);
     let completedUrl: string | null = null;
     let pollCount = 0;
 
@@ -209,14 +210,13 @@ export class HeyGenMcpAdapter {
 
     // 4. Download result video to outDir
     const rawHeyGenVideoPath = path.join(outDir, "heygen-result-raw.mp4");
-    const videoResp = await fetch(completedUrl);
-    if (!videoResp.ok) {
-      throw new Error(`下载 HeyGen 结果视频失败: ${videoResp.statusText}`);
-    }
-    const buf = Buffer.from(await videoResp.arrayBuffer());
-    fs.writeFileSync(rawHeyGenVideoPath, buf);
+    const downloaded = await downloadFileToDisk({
+      url: completedUrl,
+      outputPath: rawHeyGenVideoPath,
+      onProgress: (msg) => onLog(`[MCP Client] 正在拉取成片 ${msg}`),
+    });
 
-    onLog(`[MCP Client] HeyGen 视频下载完成 (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
+    onLog(`[MCP Client] HeyGen 视频下载完成 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB)`);
 
     return {
       lipsyncId,
