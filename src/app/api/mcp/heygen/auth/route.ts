@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { HeyGenDirectMcpProvider } from "@/lib/mcp/heygen-provider";
 import { saveAppConfig } from "@/lib/config";
+import { getHeyGenOAuthStatus } from "@/lib/mcp/heygen-remote";
 
 export async function GET() {
+  const oauth = getHeyGenOAuthStatus();
+  if (oauth.connected && oauth.user) {
+    return NextResponse.json({
+      success: true,
+      quota: oauth.user.quota,
+      remainingQuota: oauth.user.remainingCredits,
+      planName: oauth.user.planName,
+      source: "oauth",
+      email: oauth.user.email,
+    });
+  }
+
   const result = await HeyGenDirectMcpProvider.getQuota();
   return NextResponse.json(result);
 }

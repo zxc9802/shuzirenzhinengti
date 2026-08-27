@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { McpClientManager } from "@/lib/mcp/client";
 import { getAppConfig } from "@/lib/config";
+import { HEYGEN_REMOTE_MCP_URL, hasHeyGenOAuthTokens } from "@/lib/mcp/heygen-oauth-store";
 
 export async function GET() {
   const config = getAppConfig();
   const manager = McpClientManager.getInstance();
+  const transport = hasHeyGenOAuthTokens() ? "remote" : config.heygenMcpTransport;
 
-  if (!manager.getStatus().connected) {
+  if (!manager.getStatus().connected || manager.getStatus().transportType !== transport) {
     await manager.connect({
-      transport: config.heygenMcpTransport,
-      serverUrl: config.heygenMcpServerUrl,
+      transport,
+      serverUrl: transport === "remote" ? HEYGEN_REMOTE_MCP_URL : config.heygenMcpServerUrl,
       command: config.heygenMcpServerCommand,
       args: config.heygenMcpServerArgs,
     });

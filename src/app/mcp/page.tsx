@@ -10,15 +10,11 @@ import {
   Server,
   Code2,
   Terminal,
-  Layers,
-  ArrowRight,
-  Sparkles,
   Zap,
-  Key,
   ShieldCheck,
-  CreditCard,
 } from "lucide-react";
 import { McpConnectionStatus, McpToolInfo } from "@/lib/mcp/client";
+import HeyGenConnectButton from "@/components/HeyGenConnectButton";
 
 export default function McpPage() {
   const [status, setStatus] = useState<McpConnectionStatus | null>(null);
@@ -41,7 +37,7 @@ export default function McpPage() {
   } | null>(null);
 
   // Transport settings
-  const [transport, setTransport] = useState<"direct" | "sse" | "stdio">("direct");
+  const [transport, setTransport] = useState<"direct" | "sse" | "stdio" | "remote">("remote");
   const [serverUrl, setServerUrl] = useState("http://localhost:8000/sse");
   const [command, setCommand] = useState("node");
   const [commandArgs, setCommandArgs] = useState("scripts/heygen_mcp_server.mjs");
@@ -205,7 +201,7 @@ export default function McpPage() {
             <span>HeyGen MCP 套餐授权与控制台</span>
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            通过 Model Context Protocol (MCP) 标准管道直接调度 HeyGen 订阅套餐，扣除账号 Premium Credits 生成高精口型。
+            一键授权官方 HeyGen Remote MCP，用账号套餐额度直接调度高精度对口型。
           </p>
         </div>
 
@@ -219,75 +215,56 @@ export default function McpPage() {
         </button>
       </div>
 
-      {/* Top Banner: HeyGen Subscription Plan Authorization Card */}
-      <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-900/20 via-[#10121a] to-blue-950/30 p-6 backdrop-blur-xl shadow-xl">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/20 border border-blue-500/30 text-blue-400">
-                <CreditCard className="h-4 w-4" />
-              </span>
-              <h2 className="text-base font-bold text-white">HeyGen 账号套餐与授权凭证</h2>
-              {quotaInfo?.success ? (
-                <span className="flex items-center gap-1 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                  套餐授权生效中
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
-                  <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-                  待挂接套餐
-                </span>
-              )}
-            </div>
+      <HeyGenConnectButton onStatusChange={(s) => {
+        if (s.connected && s.user) {
+          setQuotaInfo({
+            success: true,
+            quota: s.user.quota,
+            remainingQuota: s.user.remainingCredits,
+            planName: s.user.planName,
+          });
+        }
+      }} />
 
-            <p className="text-xs text-zinc-300 max-w-xl">
-              直接填入您开通了 HeyGen 套餐的账号 Token，系统将通过 MCP 协议直接调用官方 Precision 引擎，扣除套餐内点数。
-            </p>
-
-            {quotaInfo?.success && (
-              <div className="flex items-center gap-4 pt-1 flex-wrap text-xs">
-                <span className="text-zinc-400">
-                  套餐类型: <strong className="text-white">{quotaInfo.planName || "标准套餐"}</strong>
-                </span>
-                <span className="text-zinc-400">
-                  剩余点数: <strong className="text-emerald-400 font-mono text-sm">{quotaInfo.remainingQuota ?? 0} Credits</strong>
-                </span>
-              </div>
+      <details className="rounded-2xl border border-white/[0.08] bg-[#10121a]/70 p-4">
+        <summary className="cursor-pointer text-xs font-semibold text-zinc-300 hover:text-white">
+          高级：仍可用 API Key / Token 作为备用鉴权
+        </summary>
+        <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <input
+            type="password"
+            value={heygenToken}
+            onChange={(e) => setHeygenToken(e.target.value)}
+            placeholder="输入 HeyGen API Token（可选备用）"
+            className="flex-1 rounded-xl border border-white/[0.1] bg-black/60 px-3.5 py-2.5 text-xs font-mono text-zinc-200 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={handleVerifyAndSaveAuth}
+            disabled={verifyingAuth}
+            className="flex items-center justify-center gap-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] px-4 py-2.5 text-xs font-bold text-zinc-200 transition-all cursor-pointer whitespace-nowrap"
+          >
+            {verifyingAuth ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ShieldCheck className="h-3.5 w-3.5" />
             )}
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 lg:min-w-[420px]">
-            <input
-              type="password"
-              value={heygenToken}
-              onChange={(e) => setHeygenToken(e.target.value)}
-              placeholder="输入您的 HeyGen 账号授权 Token / Key..."
-              className="flex-1 rounded-xl border border-white/[0.1] bg-black/60 px-3.5 py-2.5 text-xs font-mono text-zinc-200 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleVerifyAndSaveAuth}
-              disabled={verifyingAuth}
-              className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-md transition-all cursor-pointer whitespace-nowrap"
-            >
-              {verifyingAuth ? (
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <ShieldCheck className="h-3.5 w-3.5" />
-              )}
-              <span>验证并挂接套餐</span>
-            </button>
-          </div>
+            <span>验证 Token</span>
+          </button>
         </div>
-
-        {error && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-300">
-            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-            <span>{error}</span>
-          </div>
+        {quotaInfo?.success && (
+          <p className="mt-3 text-xs text-emerald-300">
+            Token 套餐: {quotaInfo.planName || "标准套餐"} · 剩余 {quotaInfo.remainingQuota ?? 0} Credits
+          </p>
         )}
-      </div>
+      </details>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-300">
+          <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+          <span>{error}</span>
+        </div>
+      )}
 
       {/* Connection Config & Status */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-7">
@@ -317,7 +294,21 @@ export default function McpPage() {
               <label className="text-xs font-medium text-zinc-300">
                 协议通信模式
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTransport("remote");
+                    setServerUrl("https://mcp.heygen.com/mcp/v1");
+                  }}
+                  className={`rounded-xl border p-2.5 text-xs font-semibold transition-all ${
+                    transport === "remote"
+                      ? "border-blue-500/80 bg-blue-500/20 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
+                      : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                  }`}
+                >
+                  官方 Remote
+                </button>
                 <button
                   type="button"
                   onClick={() => setTransport("direct")}
@@ -359,6 +350,12 @@ export default function McpPage() {
             </div>
 
             {/* Conditional input fields */}
+            {transport === "remote" && (
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                官方端点 <span className="font-mono text-zinc-200">https://mcp.heygen.com/mcp/v1</span>。请先在上方完成 HeyGen 登录授权。
+              </p>
+            )}
+
             {transport === "sse" && (
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-300">

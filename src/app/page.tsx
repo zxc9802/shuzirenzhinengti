@@ -21,6 +21,7 @@ import {
   TaskTerminal,
   PlayerComparison,
   VoiceSelector,
+  HeyGenConnectButton,
 } from "@/components";
 import { TaskItem } from "@/lib/store/task-store";
 import { VoiceItem } from "@/lib/store/voice-store";
@@ -270,6 +271,8 @@ export default function StudioPage() {
           </button>
         )}
       </div>
+
+      <HeyGenConnectButton />
 
       {/* Main Studio Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-7">

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
 import { cn } from "@/lib/utils";
+import HeyGenConnectButton from "@/components/HeyGenConnectButton";
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<any>({
@@ -503,11 +504,12 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
-            <span className="flex items-center gap-1 text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-              MCP 管道就绪
+            <span className="flex items-center gap-1 text-[11px] text-zinc-400 bg-white/[0.04] border border-white/[0.08] px-2.5 py-0.5 rounded-lg font-semibold">
+              官方 OAuth / 备用 Token
             </span>
           </div>
+
+          <HeyGenConnectButton />
 
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -590,7 +592,30 @@ export default function SettingsPage() {
               <label className="text-xs font-medium text-zinc-300 mb-2 block">
                 MCP 传输模式 (Transport)
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig({
+                      ...config,
+                      heygenMcpTransport: "remote",
+                      heygenMcpServerUrl: "https://mcp.heygen.com/mcp/v1",
+                    })
+                  }
+                  className={`rounded-xl border p-3.5 text-xs font-semibold transition-all text-left flex items-start gap-3 ${
+                    config.heygenMcpTransport === "remote"
+                      ? "border-blue-500/80 bg-blue-500/15 text-blue-200 shadow-sm ring-1 ring-blue-500/30"
+                      : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                  }`}
+                >
+                  <Cpu className="h-4 w-4 mt-0.5 shrink-0 text-blue-400" />
+                  <div>
+                    <div className="font-bold text-zinc-100">官方 Remote MCP</div>
+                    <div className="text-[11px] text-zinc-400 font-normal mt-0.5">
+                      OAuth 授权后直连 mcp.heygen.com
+                    </div>
+                  </div>
+                </button>
                 <button
                   type="button"
                   onClick={() => setConfig({ ...config, heygenMcpTransport: "stdio" })}
@@ -629,7 +654,11 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {config.heygenMcpTransport === "stdio" ? (
+            {config.heygenMcpTransport === "remote" ? (
+              <p className="text-[11px] text-zinc-400">
+                使用官方 Remote MCP。请先点击上方「授权连接 HeyGen MCP」完成登录。
+              </p>
+            ) : config.heygenMcpTransport === "stdio" ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-zinc-300">

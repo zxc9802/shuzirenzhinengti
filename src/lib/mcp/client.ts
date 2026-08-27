@@ -1,7 +1,13 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HeyGenDirectMcpProvider } from "./heygen-provider";
+import { createHeyGenOAuthProvider } from "./heygen-oauth-provider";
+import { HEYGEN_REMOTE_MCP_URL, hasHeyGenOAuthTokens } from "./heygen-oauth-store";
+
+export type McpTransportType = "sse" | "stdio" | "direct" | "remote";
 
 export interface McpToolInfo {
   name: string;
@@ -11,17 +17,43 @@ export interface McpToolInfo {
 
 export interface McpConnectionStatus {
   connected: boolean;
-  transportType: "sse" | "stdio" | "direct";
+  transportType: McpTransportType;
   serverName?: string;
   serverVersion?: string;
   tools: McpToolInfo[];
+  needsAuth?: boolean;
   error?: string;
+}
+
+function normalizeRemoteToolArgs(name: string, args: Record<string, any>): Record<string, any> {
+  const next = { ...args };
+
+  if (name === "create_lipsync" || name === "heygen_create_lipsync") {
+    if (typeof next.video_url === "string" && !next.video) {
+      next.video = { type: "url", url: next.video_url };
+      delete next.video_url;
+    }
+    if (typeof next.audio_url === "string" && !next.audio) {
+      next.audio = { type: "url", url: next.audio_url };
+      delete next.audio_url;
+    }
+  }
+
+  if (name === "get_lipsync" || name === "heygen_get_lipsync") {
+    const id = next.lipsyncId || next.lipsync_id || next.id;
+    if (id) {
+      next.lipsyncId = id;
+      next.lipsync_id = id;
+    }
+  }
+
+  return next;
 }
 
 export class McpClientManager {
   private static instance: McpClientManager;
   private client: Client | null = null;
-  private transport: SSEClientTransport | StdioClientTransport | null = null;
+  private transport: SSEClientTransport | StdioClientTransport | StreamableHTTPClientTransport | null = null;
   private status: McpConnectionStatus = {
     connected: false,
     transportType: "direct",
@@ -43,7 +75,7 @@ export class McpClientManager {
 
   public async connect(
     config: {
-      transport: "sse" | "stdio" | "direct";
+      transport: McpTransportType;
       serverUrl?: string;
       command?: string;
       args?: string[];
@@ -51,6 +83,10 @@ export class McpClientManager {
     }
   ): Promise<McpConnectionStatus> {
     await this.disconnect();
+
+    if (config.transport === "remote") {
+      return this.connectRemote(config.serverUrl);
+    }
 
     if (config.transport === "direct") {
       this.status = {
@@ -159,9 +195,77 @@ export class McpClientManager {
     }
   }
 
+  private async connectRemote(serverUrl?: string): Promise<McpConnectionStatus> {
+    if (!hasHeyGenOAuthTokens()) {
+      this.status = {
+        connected: false,
+        transportType: "remote",
+        tools: [],
+        needsAuth: true,
+        error: "尚未授权 HeyGen 官方 MCP，请先点击「授权连接 HeyGen MCP」",
+      };
+      return this.status;
+    }
+
+    try {
+      this.client = new Client(
+        {
+          name: "digital-human-lipsync-web-client",
+          version: "2.0.0",
+        },
+        {
+          capabilities: {},
+        }
+      );
+
+      const provider = createHeyGenOAuthProvider();
+      this.transport = new StreamableHTTPClientTransport(
+        new URL(serverUrl || HEYGEN_REMOTE_MCP_URL),
+        { authProvider: provider }
+      );
+
+      await this.client.connect(this.transport);
+      const toolsResult = await this.client.listTools();
+      const tools: McpToolInfo[] = (toolsResult.tools || []).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      }));
+
+      this.status = {
+        connected: true,
+        transportType: "remote",
+        serverName: "HeyGen Official Remote MCP",
+        serverVersion: "v1",
+        tools,
+      };
+      return this.status;
+    } catch (err: any) {
+      const needsAuth = err instanceof UnauthorizedError || /unauthor/i.test(err?.message || "");
+      this.status = {
+        connected: false,
+        transportType: "remote",
+        tools: [],
+        needsAuth,
+        error: needsAuth
+          ? "HeyGen MCP 授权已失效，请重新点击连接"
+          : err.message || "连接 HeyGen 官方 MCP 失败",
+      };
+      return this.status;
+    }
+  }
+
   public async callTool(name: string, args: Record<string, any>): Promise<any> {
     if (!this.status.connected) {
-      throw new Error("MCP Client is not connected");
+      throw new Error(this.status.error || "MCP Client is not connected");
+    }
+
+    if (this.status.transportType === "remote" && this.client) {
+      const response = await this.client.callTool({
+        name,
+        arguments: normalizeRemoteToolArgs(name, args),
+      });
+      return response;
     }
 
     if (this.status.transportType === "direct" || !this.client) {

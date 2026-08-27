@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Video, Cpu, History, Settings, Users, Mic, User, LogOut, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import HeyGenConnectButton from "./HeyGenConnectButton";
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -73,6 +74,8 @@ export default function Navbar() {
               );
             })}
           </nav>
+
+          <HeyGenConnectButton variant="compact" />
 
           {/* SSO User Badge & Main App Link */}
           {user && (

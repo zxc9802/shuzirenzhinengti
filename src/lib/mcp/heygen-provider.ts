@@ -8,6 +8,17 @@ export interface HeyGenQuotaInfo {
   error?: string;
 }
 
+function getAuthHeaders(token: string) {
+  const clean = token.trim();
+  const rawKey = clean.replace(/^Bearer\s+/i, "");
+  const bearer = clean.startsWith("Bearer ") ? clean : `Bearer ${clean}`;
+  return {
+    "X-Api-Key": rawKey,
+    "Authorization": bearer,
+    "Accept": "application/json",
+  };
+}
+
 export class HeyGenDirectMcpProvider {
   public static async getQuota(): Promise<HeyGenQuotaInfo> {
     const config = getAppConfig();
@@ -21,23 +32,22 @@ export class HeyGenDirectMcpProvider {
       };
     }
 
+    const authHeaders = getAuthHeaders(apiKey);
+
     try {
       // 1. Try remaining quota endpoint
       const resp = await fetch(`${baseUrl}/v1/user/remaining_quota`, {
         method: "GET",
-        headers: {
-          "X-Api-Key": apiKey,
-          "Accept": "application/json",
-        },
+        headers: authHeaders,
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
 
       if (resp.ok && data.code === 100) {
         return {
           success: true,
           quota: data.data?.quota || 0,
-          remainingQuota: data.data?.remaining_quota || data.data?.remainingQuota || 0,
+          remainingQuota: data.data?.remaining_quota ?? data.data?.remainingQuota ?? data.data?.quota ?? 0,
           planName: data.data?.plan || "HeyGen 套餐计划",
         };
       }
@@ -45,25 +55,22 @@ export class HeyGenDirectMcpProvider {
       // 2. Try user info endpoint as fallback
       const userResp = await fetch(`${baseUrl}/v2/user/info`, {
         method: "GET",
-        headers: {
-          "X-Api-Key": apiKey,
-          "Accept": "application/json",
-        },
+        headers: authHeaders,
       });
 
-      const userData = await userResp.json();
-      if (userResp.ok && userData.code === 100) {
+      const userData = await userResp.json().catch(() => ({}));
+      if (userResp.ok && (userData.code === 100 || userData.data)) {
         return {
           success: true,
           quota: userData.data?.quota || 0,
-          remainingQuota: userData.data?.remaining_quota || userData.data?.quota || 0,
-          planName: userData.data?.subscription?.plan || "HeyGen 套餐",
+          remainingQuota: userData.data?.remaining_quota ?? userData.data?.quota ?? 0,
+          planName: userData.data?.subscription?.plan || userData.data?.plan || "HeyGen Pro 套餐",
         };
       }
 
       return {
         success: false,
-        error: data.message || userData.message || `HeyGen 鉴权失败 (${resp.status})`,
+        error: data.message || userData.message || `HeyGen 鉴权响应码 (${resp.status})`,
       };
     } catch (err: any) {
       return {
@@ -106,7 +113,7 @@ export class HeyGenDirectMcpProvider {
     const resp = await fetch(`${baseUrl}/v1/video/lipsync`, {
       method: "POST",
       headers: {
-        "X-Api-Key": apiKey,
+        ...getAuthHeaders(apiKey),
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
@@ -153,9 +160,7 @@ export class HeyGenDirectMcpProvider {
 
     const resp = await fetch(`${baseUrl}/v1/video_status.get?video_id=${lipsyncId}`, {
       method: "GET",
-      headers: {
-        "X-Api-Key": apiKey,
-      },
+      headers: getAuthHeaders(apiKey),
     });
 
     const data = await resp.json();

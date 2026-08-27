@@ -14,6 +14,7 @@ export async function middleware(request: NextRequest) {
   // 1. Whitelist static files, SSO callback, and public endpoints
   if (
     pathname === "/api/sso/callback" ||
+    pathname.startsWith("/api/mcp/heygen/oauth/") ||
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/jobs/") ||
     pathname.startsWith("/uploads/") ||

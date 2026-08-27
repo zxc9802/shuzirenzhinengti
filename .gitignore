@@ -22,6 +22,7 @@
 # Environment variables
 .env*.local
 .settings.json
+.heygen-mcp-auth.json
 .tasks.json
 
 # Logs

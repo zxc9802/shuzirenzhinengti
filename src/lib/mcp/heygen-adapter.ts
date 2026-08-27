@@ -1,5 +1,6 @@
 import { McpClientManager, McpToolInfo } from "./client";
 import { getAppConfig } from "../config";
+import { hasHeyGenOAuthTokens } from "./heygen-oauth-store";
 import fs from "fs";
 import path from "path";
 
@@ -61,14 +62,16 @@ export class HeyGenMcpAdapter {
     const config = getAppConfig();
     const { videoUrl, audioUrl, submissionTitle, onLog = () => {} } = options;
     const mcpManager = McpClientManager.getInstance();
+    const transport = hasHeyGenOAuthTokens() ? "remote" : config.heygenMcpTransport;
+    const serverUrl = transport === "remote" ? "https://mcp.heygen.com/mcp/v1" : config.heygenMcpServerUrl;
 
-    onLog(`[MCP Client] 正在连接高精度口型驱动 MCP 服务端 (${config.heygenMcpTransport.toUpperCase()})...`);
+    onLog(`[MCP Client] 正在连接高精度口型驱动 MCP 服务端 (${transport.toUpperCase()})...`);
 
     // Ensure connection to MCP Server
-    if (!mcpManager.getStatus().connected) {
+    if (!mcpManager.getStatus().connected || mcpManager.getStatus().transportType !== transport) {
       await mcpManager.connect({
-        transport: config.heygenMcpTransport,
-        serverUrl: config.heygenMcpServerUrl,
+        transport,
+        serverUrl,
         command: config.heygenMcpServerCommand,
         args: config.heygenMcpServerArgs,
       });
@@ -139,8 +142,10 @@ export class HeyGenMcpAdapter {
 
       lipsyncId =
         parsed?.lipsync_id ||
+        parsed?.lipsyncId ||
         parsed?.id ||
         parsed?.data?.lipsync_id ||
+        parsed?.data?.lipsyncId ||
         parsed?.data?.id ||
         (typeof parsed === "string" ? parsed : null);
     }
@@ -160,7 +165,10 @@ export class HeyGenMcpAdapter {
       await new Promise((r) => setTimeout(r, 6000));
       pollCount++;
 
-      const getRaw = await mcpManager.callTool(getToolName, { lipsync_id: lipsyncId });
+      const getRaw = await mcpManager.callTool(getToolName, {
+        lipsync_id: lipsyncId,
+        lipsyncId,
+      });
       const parsed = parseMcpToolResponse(getRaw);
 
       const status = (

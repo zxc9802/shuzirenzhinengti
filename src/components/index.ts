@@ -1,4 +1,5 @@
 export { default as AvatarLibrary } from "./AvatarLibrary";
+export { default as HeyGenConnectButton } from "./HeyGenConnectButton";
 export { default as Navbar } from "./Navbar";
 export { default as PipelineVisualizer } from "./PipelineVisualizer";
 export { default as PlayerComparison } from "./PlayerComparison";

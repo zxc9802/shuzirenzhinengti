@@ -12,7 +12,7 @@ export interface AppConfig {
   heygenMcpServerUrl: string;
   heygenMcpServerCommand: string;
   heygenMcpServerArgs: string[];
-  heygenMcpTransport: "sse" | "stdio" | "direct";
+  heygenMcpTransport: "sse" | "stdio" | "direct" | "remote";
   storageDir: string;
   publicBaseUrl: string;
 
@@ -92,14 +92,14 @@ const DEFAULT_CONFIG: AppConfig = {
   heygenApiBaseUrl:
     process.env.HEYGEN_API_BASE_URL || "https://api.heygen.com",
   heygenMcpServerUrl:
-    process.env.HEYGEN_MCP_SERVER_URL || "http://localhost:8000/sse",
+    process.env.HEYGEN_MCP_SERVER_URL || "https://mcp.heygen.com/mcp/v1",
   heygenMcpServerCommand:
     process.env.HEYGEN_MCP_SERVER_COMMAND || "node",
   heygenMcpServerArgs: process.env.HEYGEN_MCP_SERVER_ARGS
     ? JSON.parse(process.env.HEYGEN_MCP_SERVER_ARGS)
     : [defaultMcpScriptPath],
   heygenMcpTransport:
-    (process.env.HEYGEN_MCP_TRANSPORT as "sse" | "stdio" | "direct") || "stdio",
+    (process.env.HEYGEN_MCP_TRANSPORT as AppConfig["heygenMcpTransport"]) || "direct",
   storageDir: path.join(process.cwd(), "public", "jobs"),
   publicBaseUrl:
     process.env.PUBLIC_BASE_URL ||
