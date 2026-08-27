@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, Cpu, History, Settings, Users, Mic, Radio } from "lucide-react";
+import { Video, Cpu, History, Settings, Users, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function Navbar() {
@@ -12,8 +12,8 @@ export default function Navbar() {
     { name: "制作台", href: "/", icon: Video },
     { name: "形象库", href: "/avatars", icon: Users },
     { name: "声音库", href: "/voices", icon: Mic },
-    { name: "MCP 控制台", href: "/mcp", icon: Cpu },
     { name: "任务历史", href: "/history", icon: History },
+    { name: "MCP 控制台", href: "/mcp", icon: Cpu },
     { name: "系统配置", href: "/settings", icon: Settings },
   ];
 
@@ -25,22 +25,16 @@ export default function Navbar() {
             <Video className="h-4 w-4 sm:h-5 sm:w-5 text-blue-400" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm sm:text-base font-bold tracking-tight text-zinc-100 group-hover:text-white transition-colors">
-                数字人对口型 Studio
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-md bg-zinc-800/80 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-zinc-300 border border-white/[0.08] hidden sm:inline-flex">
-                <Radio className="h-2.5 w-2.5 text-blue-400" />
-                MCP 协议
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 font-normal hidden md:block">
-              IndexTTS-2 原声克隆 · HeyGen Precision
+            <span className="text-sm sm:text-base font-bold tracking-tight text-zinc-100 group-hover:text-white transition-colors">
+              数字人制作
+            </span>
+            <p className="text-[11px] text-zinc-400 font-normal hidden sm:block">
+              AI 智能原声克隆 · 高精唇形驱动
             </p>
           </div>
         </Link>
 
-        {/* Navigation Items (Clean Fixed Layout without Scrollbar) */}
+        {/* Navigation Items */}
         <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0 overflow-hidden">
           {navItems.map((item) => {
             const Icon = item.icon;

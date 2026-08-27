@@ -218,14 +218,10 @@ export default function StudioPage() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-white/[0.08] pb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
-            <span>数字人对口型智能制作台</span>
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 border border-white/[0.1] px-2.5 py-1 text-xs font-semibold text-zinc-300">
-              <Zap className="h-3 w-3 text-blue-400" />
-              HeyGen Precision + IndexTTS-2
-            </span>
+            <span>数字人制作台</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl leading-relaxed">
-            上传口播视频与文本，选择或上传专属声音库，通过标准 MCP 协议客户端调度 HeyGen 对口型并无损绑定克隆原声。
+            上传口播视频与文案，选用专属克隆音色，一键生成唇形自然匹配的高清数字人视频。
           </p>
         </div>
 

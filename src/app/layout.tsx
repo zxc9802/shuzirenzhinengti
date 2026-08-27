@@ -3,8 +3,8 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 
 export const metadata: Metadata = {
-  title: "数字人对口型智能工作台 | MCP Enabled",
-  description: "基于 IndexTTS-2 定制配音与 HeyGen Precision MCP 驱动的数字人对口型智能系统",
+  title: "数字人制作",
+  description: "专属音色克隆与高精唇形同步数字人制作平台",
 };
 
 export default function RootLayout({
@@ -21,7 +21,7 @@ export default function RootLayout({
             {children}
           </main>
           <footer className="border-t border-zinc-900 py-6 text-center text-xs text-zinc-600">
-            数字人对口型智能工作台 · Next.js + MCP Client + IndexTTS-2 + HeyGen Precision
+            数字人制作平台 · 专属音色克隆与高清唇形同步
           </footer>
         </div>
       </body>

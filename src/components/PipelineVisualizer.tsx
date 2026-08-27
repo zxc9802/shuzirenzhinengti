@@ -24,12 +24,12 @@ interface PipelineVisualizerProps {
 }
 
 const STEPS = [
-  { key: "tts", label: "IndexTTS-2 配音", sub: "中文原声克隆", icon: Mic },
-  { key: "media_prep", label: "FFmpeg 适配", sub: "音画智能对齐", icon: Film },
-  { key: "mcp_preflight", label: "零计费门禁", sub: "SHA-256校验", icon: ShieldCheck },
-  { key: "mcp_lipsync_submit", label: "HeyGen MCP", sub: "Precision口型", icon: Cpu },
-  { key: "finalize", label: "原声混流封装", sub: "无损绑定音频", icon: Layers },
-  { key: "done", label: "交付验收", sub: "对比播放", icon: CheckCircle2 },
+  { key: "tts", label: "原声配音合成", sub: "专属音色克隆", icon: Mic },
+  { key: "media_prep", label: "音画智能对齐", sub: "帧率时长优化", icon: Film },
+  { key: "mcp_preflight", label: "质量合规校验", sub: "规格与完整性", icon: ShieldCheck },
+  { key: "mcp_lipsync_submit", label: "高精度对口型", sub: "自然唇形驱动", icon: Cpu },
+  { key: "finalize", label: "高清混流封装", sub: "无损音画合成", icon: Layers },
+  { key: "done", label: "成片交付就绪", sub: "生成完成可播放", icon: CheckCircle2 },
 ];
 
 function stepToIndex(stepKey: TaskStep): number {
