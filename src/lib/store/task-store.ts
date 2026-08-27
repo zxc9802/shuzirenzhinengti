@@ -39,6 +39,7 @@ export interface TaskItem {
     speakerVoiceId?: string;
     speakerAudioUrl?: string;
     emotionAudioUrl?: string;
+    lipsyncProvider?: "heygen" | "pixverse";
   };
   results: {
     originalVideoUrl?: string;
@@ -46,6 +47,8 @@ export interface TaskItem {
     exactAudioUrl?: string;
     evidenceJsonUrl?: string;
     heygenLipsyncId?: string;
+    lipsyncProvider?: "heygen" | "pixverse";
+    lipsyncCredits?: number;
     creditsBefore?: number;
     creditsAfter?: number;
     videoDuration?: number;

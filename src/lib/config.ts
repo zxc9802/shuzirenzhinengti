@@ -13,6 +13,10 @@ export interface AppConfig {
   heygenMcpServerCommand: string;
   heygenMcpServerArgs: string[];
   heygenMcpTransport: "sse" | "stdio" | "direct" | "remote";
+  lipsyncProvider: "heygen" | "pixverse";
+  openluxApiKey: string;
+  openluxBaseUrl: string;
+  openluxLipsyncModel: string;
   storageDir: string;
   publicBaseUrl: string;
 
@@ -100,6 +104,11 @@ const DEFAULT_CONFIG: AppConfig = {
     : [defaultMcpScriptPath],
   heygenMcpTransport:
     (process.env.HEYGEN_MCP_TRANSPORT as AppConfig["heygenMcpTransport"]) || "direct",
+  lipsyncProvider:
+    (process.env.LIPSYNC_PROVIDER as AppConfig["lipsyncProvider"]) || "heygen",
+  openluxApiKey: process.env.OPENLUX_API_KEY || "",
+  openluxBaseUrl: process.env.OPENLUX_API_BASE_URL || "https://api.openlux.ai",
+  openluxLipsyncModel: process.env.OPENLUX_LIPSYNC_MODEL || "pixverse-lipsync",
   storageDir: path.join(process.cwd(), "public", "jobs"),
   publicBaseUrl:
     process.env.PUBLIC_BASE_URL ||

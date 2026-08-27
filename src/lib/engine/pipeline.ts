@@ -9,8 +9,8 @@ import {
   finalizeVideo,
   sha256File,
 } from "./ffmpeg";
-import { preflightHeyGenMedia } from "./preflight";
 import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
+import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 import { CosService } from "../cos";
 
 export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
@@ -119,13 +119,15 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       "success"
     );
 
-    // 4. Step: MCP Preflight and Lip-sync submission
+    // 4. Step: Lip-sync submission (HeyGen MCP or PixVerse / OpenLux)
+    const lipsyncProvider =
+      task.inputs.lipsyncProvider || config.lipsyncProvider || "heygen";
+
     currentStep = "mcp_preflight";
     TaskStore.update(taskId, {
       step: "mcp_preflight",
       progress: 50,
     });
-    log("🛡️ 第三步: 零计费门禁校验媒体直链...");
 
     // Submission title based on hashes for idempotency
     const submissionTitle = `lipsync_${sha256Video.slice(0, 8)}_${sha256Audio.slice(
@@ -156,23 +158,57 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       }
     }
 
-    currentStep = "mcp_lipsync_submit";
-    TaskStore.update(taskId, {
-      step: "mcp_lipsync_submit",
-      progress: 65,
-    });
-    log("🔌 第四步: 正在调度 AI 高精度唇形驱动引擎...");
+    let heygenResult: {
+      lipsyncId: string;
+      status: "completed" | "failed";
+      downloadUrl?: string;
+      creditsUsed?: number;
+    };
 
-    // Execute through MCP Adapter
-    const heygenResult = await HeyGenMcpAdapter.executeLipsync(
-      {
-        videoUrl: publicVideoUrl,
-        audioUrl: publicAudioUrl,
-        submissionTitle,
-        onLog: (m) => log(m),
-      },
-      jobDir
-    );
+    if (lipsyncProvider === "pixverse") {
+      log("🛡️ 第三步: 校验 PixVerse 对口型素材...");
+      if (!fs.existsSync(preparedVideoPath) || !fs.existsSync(ttsResult.finalWavPath)) {
+        throw new Error("预处理视频或原声音轨不存在，无法提交 PixVerse 对口型");
+      }
+      log("素材校验通过，准备上传至 OpenLux / PixVerse", "success");
+
+      currentStep = "mcp_lipsync_submit";
+      TaskStore.update(taskId, {
+        step: "mcp_lipsync_submit",
+        progress: 65,
+      });
+      log("🔌 第四步: 正在调度 PixVerse (pixverse-lipsync) 对口型...");
+
+      heygenResult = await OpenLuxLipsyncAdapter.execute(
+        {
+          videoPath: preparedVideoPath,
+          audioPath: ttsResult.finalWavPath,
+          videoUrl: publicVideoUrl,
+          audioUrl: publicAudioUrl,
+          onLog: (m) => log(m),
+        },
+        jobDir
+      );
+    } else {
+      log("🛡️ 第三步: 零计费门禁校验媒体直链...");
+
+      currentStep = "mcp_lipsync_submit";
+      TaskStore.update(taskId, {
+        step: "mcp_lipsync_submit",
+        progress: 65,
+      });
+      log("🔌 第四步: 正在调度 AI 高精度唇形驱动引擎...");
+
+      heygenResult = await HeyGenMcpAdapter.executeLipsync(
+        {
+          videoUrl: publicVideoUrl,
+          audioUrl: publicAudioUrl,
+          submissionTitle,
+          onLog: (m) => log(m),
+        },
+        jobDir
+      );
+    }
 
     // 5. Step: Finalize and Remux with exact audio
     currentStep = "finalize";
@@ -216,10 +252,17 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
           sha256: sha256Audio,
         },
       },
+      lipsync: {
+        provider: lipsyncProvider,
+        lipsync_id: heygenResult.lipsyncId,
+        submission_title: submissionTitle,
+        model: lipsyncProvider === "pixverse" ? "pixverse-lipsync" : "heygen-precision",
+        credits: heygenResult.creditsUsed,
+      },
       heygen: {
         lipsync_id: heygenResult.lipsyncId,
         submission_title: submissionTitle,
-        mode: "precision",
+        mode: lipsyncProvider === "pixverse" ? "pixverse-lipsync" : "precision",
       },
     };
 
@@ -264,6 +307,8 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
         exactAudioUrl,
         evidenceJsonUrl,
         heygenLipsyncId: heygenResult.lipsyncId,
+        lipsyncProvider,
+        lipsyncCredits: heygenResult.creditsUsed,
         videoDuration: finalProbe.durationSeconds,
         audioDuration: ttsResult.selectedDuration,
         resolution: `${finalProbe.width}x${finalProbe.height}`,

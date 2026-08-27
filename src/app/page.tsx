@@ -41,6 +41,7 @@ export default function StudioPage() {
   const [videoFit, setVideoFit] = useState<"smart" | "preserve">("smart");
   const [emotionIntensity, setEmotionIntensity] = useState(0.8);
   const [selectedVoice, setSelectedVoice] = useState<VoiceItem | null>(null);
+  const [lipsyncProvider, setLipsyncProvider] = useState<"heygen" | "pixverse">("pixverse");
 
   const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
   const [loading, setLoading] = useState(false);
@@ -60,6 +61,9 @@ export default function StudioPage() {
             setToneProfile(cachedTask.inputs.toneProfile || "low");
             setVideoFit(cachedTask.inputs.videoFit || "smart");
             setEmotionIntensity(cachedTask.inputs.emotionIntensity ?? 0.8);
+            if (cachedTask.inputs.lipsyncProvider) {
+              setLipsyncProvider(cachedTask.inputs.lipsyncProvider);
+            }
             if (cachedTask.inputs.videoPath || cachedTask.inputs.videoUrl) {
               setVideoData({
                 name: cachedTask.inputs.videoName || "口播素材.mp4",
@@ -115,7 +119,10 @@ export default function StudioPage() {
           setScriptText(taskToLoad.inputs.scriptText || "");
           setToneProfile(taskToLoad.inputs.toneProfile || "low");
           setVideoFit(taskToLoad.inputs.videoFit || "smart");
-          setEmotionIntensity(taskToLoad.inputs.emotionIntensity ?? 0.8);
+            setEmotionIntensity(taskToLoad.inputs.emotionIntensity ?? 0.8);
+            if (taskToLoad.inputs.lipsyncProvider) {
+              setLipsyncProvider(taskToLoad.inputs.lipsyncProvider);
+            }
           if (taskToLoad.inputs.videoPath || taskToLoad.inputs.videoUrl) {
             setVideoData({
               name: taskToLoad.inputs.videoName || "口播素材.mp4",
@@ -219,6 +226,7 @@ export default function StudioPage() {
           emotionIntensity,
           speakerVoiceId: selectedVoice?.id,
           speakerAudioUrl: selectedVoice?.audioUrl,
+          lipsyncProvider,
         }),
       });
 
@@ -316,7 +324,49 @@ export default function StudioPage() {
             />
           </div>
 
-          {/* Card 3: Voice Selection & Fit Options */}
+          {/* Card 3: Lipsync engine */}
+          <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl">
+            <h2 className="text-xs font-bold text-zinc-100 uppercase tracking-wider mb-3.5 flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-300 text-[11px] font-bold border border-white/[0.1]">
+                3
+              </span>
+              对口型引擎
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setLipsyncProvider("pixverse")}
+                disabled={isRunning}
+                className={`rounded-xl border p-3 text-left transition-all ${
+                  lipsyncProvider === "pixverse"
+                    ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
+                    : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                }`}
+              >
+                <div className="text-xs font-bold text-zinc-100">PixVerse Lip Sync</div>
+                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                  OpenLux 直连 `pixverse-lipsync`，按秒计费，无需 HeyGen 授权
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLipsyncProvider("heygen")}
+                disabled={isRunning}
+                className={`rounded-xl border p-3 text-left transition-all ${
+                  lipsyncProvider === "heygen"
+                    ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
+                    : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                }`}
+              >
+                <div className="text-xs font-bold text-zinc-100">HeyGen MCP</div>
+                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                  官方 Precision 对口型，走套餐 Credits，需完成 MCP 授权
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Card 4: Voice Selection & Fit Options */}
           <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl space-y-5">
             {/* Voice Library Selector */}
             <VoiceSelector

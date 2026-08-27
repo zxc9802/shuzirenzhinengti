@@ -39,6 +39,10 @@ export default function SettingsPage() {
     heygenMcpServerUrl: "http://localhost:8000/sse",
     heygenMcpServerCommand: "node",
     heygenMcpServerArgs: ["scripts/heygen_mcp_server.mjs"],
+    lipsyncProvider: "heygen",
+    openluxApiKey: "",
+    openluxBaseUrl: "https://api.openlux.ai",
+    openluxLipsyncModel: "pixverse-lipsync",
 
     // Tencent Cloud COS
     cosSecretId: "",
@@ -81,6 +85,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHeyGenKey, setShowHeyGenKey] = useState(false);
+  const [showOpenluxKey, setShowOpenluxKey] = useState(false);
   const [testingHeyGen, setTestingHeyGen] = useState(false);
   const [heygenTestResult, setHeygenTestResult] = useState<{
     success: boolean;
@@ -710,6 +715,93 @@ export default function SettingsPage() {
                 />
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Section 1b: OpenLux / PixVerse lipsync */}
+        <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                <Zap className="h-4 w-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                  PixVerse 对口型 (OpenLux)
+                </h2>
+                <p className="text-[11px] text-zinc-400 mt-0.5">
+                  直连 pixverse-lipsync，制作台可与 HeyGen 二选一
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className="text-xs font-medium text-zinc-300">OpenLux API Key</label>
+              <div className="relative">
+                <input
+                  type={showOpenluxKey ? "text" : "password"}
+                  value={config.openluxApiKey || ""}
+                  onChange={(e) => setConfig({ ...config, openluxApiKey: e.target.value })}
+                  placeholder="sk-..."
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 pr-10 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowOpenluxKey(!showOpenluxKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                >
+                  {showOpenluxKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-300">接口地址</label>
+              <input
+                type="text"
+                value={config.openluxBaseUrl || "https://api.openlux.ai"}
+                onChange={(e) => setConfig({ ...config, openluxBaseUrl: e.target.value })}
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-300">模型名</label>
+              <input
+                type="text"
+                value={config.openluxLipsyncModel || "pixverse-lipsync"}
+                onChange={(e) => setConfig({ ...config, openluxLipsyncModel: e.target.value })}
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-300">默认对口型引擎</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setConfig({ ...config, lipsyncProvider: "pixverse" })}
+                className={`rounded-xl border p-2.5 text-xs font-semibold ${
+                  config.lipsyncProvider === "pixverse"
+                    ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                    : "border-white/[0.06] bg-black/30 text-zinc-400"
+                }`}
+              >
+                PixVerse
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfig({ ...config, lipsyncProvider: "heygen" })}
+                className={`rounded-xl border p-2.5 text-xs font-semibold ${
+                  config.lipsyncProvider === "heygen"
+                    ? "border-blue-500/80 bg-blue-500/15 text-blue-200"
+                    : "border-white/[0.06] bg-black/30 text-zinc-400"
+                }`}
+              >
+                HeyGen
+              </button>
+            </div>
           </div>
         </div>
 

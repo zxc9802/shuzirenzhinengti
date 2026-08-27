@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TaskStore } from "@/lib/store/task-store";
 import { runDigitalHumanPipeline } from "@/lib/engine/pipeline";
+import { getAppConfig } from "@/lib/config";
 
 export async function GET() {
   const tasks = await TaskStore.getAllAsync();
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
       speakerVoiceId,
       speakerAudioUrl,
       emotionAudioUrl,
+      lipsyncProvider,
     } = body;
 
     if ((!videoPath && !videoUrl) || !scriptText) {
@@ -45,6 +47,10 @@ export async function POST(req: NextRequest) {
         speakerVoiceId,
         speakerAudioUrl,
         emotionAudioUrl,
+        lipsyncProvider:
+          lipsyncProvider === "pixverse" || lipsyncProvider === "heygen"
+            ? lipsyncProvider
+            : getAppConfig().lipsyncProvider || "heygen",
       },
       results: {},
     });

@@ -8,8 +8,12 @@ export async function GET() {
     indexttsApiKey: config.indexttsApiKey
       ? config.indexttsApiKey.slice(0, 4) + "••••••••" + config.indexttsApiKey.slice(-4)
       : "",
+    openluxApiKey: config.openluxApiKey
+      ? config.openluxApiKey.slice(0, 4) + "••••••••" + config.openluxApiKey.slice(-4)
+      : "",
     rawKeysPresent: {
       indextts: !!config.indexttsApiKey,
+      openlux: !!config.openluxApiKey,
     },
   };
   return NextResponse.json({ config: safeConfig });
@@ -20,6 +24,9 @@ export async function POST(req: NextRequest) {
 
   if (body.indexttsApiKey && body.indexttsApiKey.includes("••••")) {
     delete body.indexttsApiKey;
+  }
+  if (body.openluxApiKey && body.openluxApiKey.includes("••••")) {
+    delete body.openluxApiKey;
   }
 
   const updated = saveAppConfig(body);
