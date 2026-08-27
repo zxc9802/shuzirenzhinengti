@@ -36,9 +36,34 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
     });
     log("🚀 启动数字人对口型流水线...");
 
+    // 0. Ensure source video exists locally (auto-download from videoUrl / COS if missing from local disk)
+    let localVideoPath = task.inputs.videoPath;
+    const needDownload = !localVideoPath || !fs.existsSync(localVideoPath);
+
+    if (needDownload) {
+      const sourceUrl = task.inputs.videoUrl;
+      if (!sourceUrl) {
+        throw new Error(`未找到可用视频文件，本地路径不存在且无云端直链: ${localVideoPath || "空"}`);
+      }
+      log(`⬇️ 正在从云端存储同步视频素材至当前实例...`);
+      const downloadsDir = path.join(process.cwd(), "public", "uploads", "videos");
+      fs.mkdirSync(downloadsDir, { recursive: true });
+      const targetFileName = localVideoPath ? path.basename(localVideoPath) : `${Date.now()}_source.mp4`;
+      localVideoPath = path.join(downloadsDir, targetFileName);
+
+      // Download file to localVideoPath
+      const resp = await fetch(sourceUrl);
+      if (!resp.ok) {
+        throw new Error(`从云端下载视频素材失败 (HTTP ${resp.status}): ${sourceUrl}`);
+      }
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      fs.writeFileSync(localVideoPath, buffer);
+      log(`✅ 视频素材已成功同步至本地 (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`, "success");
+    }
+
     // 1. Probe source video
     log("📹 正在探测原始口播视频参数...");
-    const originalProbe = await probeMedia(task.inputs.videoPath);
+    const originalProbe = await probeMedia(localVideoPath);
     log(
       `原始视频信息: 分辨率 ${originalProbe.width}x${originalProbe.height} | 时长 ${originalProbe.durationSeconds.toFixed(
         2
@@ -80,7 +105,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
 
     const preparedVideoPath = path.join(jobDir, "heygen-source-video.mp4");
     const prepResult = await prepareSourceVideo(
-      task.inputs.videoPath,
+      localVideoPath,
       ttsResult.selectedDuration,
       preparedVideoPath,
       task.inputs.videoFit
@@ -110,8 +135,26 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
 
     // Prepare public URLs for media
     const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-    const publicVideoUrl = `${baseUrl}/jobs/${taskId}/heygen-source-video.mp4`;
-    const publicAudioUrl = `${baseUrl}/jobs/${taskId}/exact-final-indextts.wav`;
+    let publicVideoUrl = `${baseUrl}/jobs/${taskId}/heygen-source-video.mp4`;
+    let publicAudioUrl = `${baseUrl}/jobs/${taskId}/exact-final-indextts.wav`;
+
+    // If Tencent Cloud COS is configured, upload prepared video & audio to COS for 100% reachable public access
+    if (CosService.isConfigured()) {
+      try {
+        log("☁️ 正在将预处理音画直链同步至腾讯云 COS 高速分发...", "info");
+        publicVideoUrl = await CosService.uploadFile(
+          preparedVideoPath,
+          `jobs/${taskId}/heygen-source-video.mp4`
+        );
+        publicAudioUrl = await CosService.uploadFile(
+          ttsResult.finalWavPath,
+          `jobs/${taskId}/exact-final-indextts.wav`
+        );
+        log("✅ 预处理音视频直链已就绪 (腾讯云 COS)", "success");
+      } catch (cosErr: any) {
+        console.warn("COS sync for HeyGen inputs failed, fallback to baseUrl:", cosErr.message);
+      }
+    }
 
     currentStep = "mcp_lipsync_submit";
     TaskStore.update(taskId, {

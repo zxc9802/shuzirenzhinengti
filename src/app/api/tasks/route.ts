@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       emotionAudioUrl,
     } = body;
 
-    if (!videoPath || !scriptText) {
+    if ((!videoPath && !videoUrl) || !scriptText) {
       return NextResponse.json(
         { error: "缺少视频文件或文本内容" },
         { status: 400 }
