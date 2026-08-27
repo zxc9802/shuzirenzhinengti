@@ -40,18 +40,40 @@ export async function POST(req: NextRequest) {
       console.warn("Probe warning for uploaded file:", e.message);
     }
 
-    // Extract video thumbnail frame
-    const thumbPath = path.join(uploadsDir, `${safeName}_thumb.jpg`);
-    try {
-      await extractVideoThumbnail(filePath, thumbPath);
-      coverUrl = `/uploads/videos/${safeName}_thumb.jpg`;
-    } catch (thumbErr: any) {
-      console.warn("Thumbnail extraction error:", thumbErr.message);
+    const baseName = safeName.replace(/\.[^/.]+$/, "");
+    const thumbFileName = `${baseName}_thumb.jpg`;
+    const thumbPath = path.join(uploadsDir, thumbFileName);
+
+    // 1. Check if client sent pre-captured thumbnail from canvas
+    const clientThumb = formData.get("thumbnail") as File | null;
+    if (clientThumb) {
+      try {
+        const clientThumbBuffer = Buffer.from(await clientThumb.arrayBuffer());
+        if (clientThumbBuffer.length > 500) {
+          fs.writeFileSync(thumbPath, clientThumbBuffer);
+          coverUrl = `/uploads/videos/${thumbFileName}`;
+        }
+      } catch (clientThumbErr: any) {
+        console.warn("Client thumbnail write error:", clientThumbErr.message);
+      }
     }
 
-    // If Tencent Cloud COS is configured, upload video & thumbnail to COS
+    // 2. If thumbnail not yet ready, extract frame using FFmpeg at 1.0s (or probe duration * 0.1)
+    if (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 500) {
+      try {
+        const seekTime = probe?.durationSeconds && probe.durationSeconds > 2 ? 1.0 : 0.5;
+        await extractVideoThumbnail(filePath, thumbPath, seekTime);
+        coverUrl = `/uploads/videos/${thumbFileName}`;
+      } catch (thumbErr: any) {
+        console.warn("FFmpeg thumbnail extraction error:", thumbErr.message);
+      }
+    }
+
+    // If Tencent Cloud COS is configured, upload video & thumbnail to COS with public-read permissions
     if (CosService.isConfigured()) {
       try {
+        CosService.ensureBucketPublicAndCors().catch(() => {});
+
         const cosKey = `uploads/videos/${safeName}`;
         const cosUrl = await CosService.uploadFile(filePath, cosKey);
         fileUrl = cosUrl;

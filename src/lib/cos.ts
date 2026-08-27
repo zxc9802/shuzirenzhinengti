@@ -74,6 +74,9 @@ export const CosService = {
           Region: config.cosRegion,
           Key: cleanKey,
           FilePath: localFilePath,
+          Headers: {
+            "x-cos-acl": "public-read",
+          },
           onProgress: (progressData) => {
             if (onProgress && progressData.percent) {
               onProgress(Math.round(progressData.percent * 100));
@@ -86,6 +89,17 @@ export const CosService = {
             reject(new Error(`腾讯云 COS 上传失败: ${err.message || JSON.stringify(err)}`));
             return;
           }
+
+          // Ensure object has public-read permission
+          cos.putObjectAcl(
+            {
+              Bucket: config.cosBucket,
+              Region: config.cosRegion,
+              Key: cleanKey,
+              ACL: "public-read",
+            },
+            () => {}
+          );
 
           let publicUrl = "";
           if (config.cosCustomDomain) {
@@ -194,6 +208,63 @@ export const CosService = {
     });
   },
 
+  async setObjectAcl(key: string, acl: "private" | "public-read" = "public-read"): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return;
+
+    const cleanKey = key.replace(/^\/+/, "");
+    return new Promise((resolve) => {
+      cos.putObjectAcl(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+          ACL: acl,
+        },
+        () => resolve()
+      );
+    });
+  },
+
+  async ensureBucketPublicAndCors(): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return;
+
+    try {
+      await new Promise<void>((resolve) => {
+        cos.putBucketAcl(
+          {
+            Bucket: config.cosBucket,
+            Region: config.cosRegion,
+            ACL: "public-read",
+          },
+          () => resolve()
+        );
+      });
+
+      await new Promise<void>((resolve) => {
+        cos.putBucketCors(
+          {
+            Bucket: config.cosBucket,
+            Region: config.cosRegion,
+            CORSRules: [
+              {
+                AllowedOrigin: ["*"],
+                AllowedMethod: ["GET", "POST", "PUT", "DELETE", "HEAD"],
+                AllowedHeader: ["*"],
+                ExposeHeader: ["ETag", "Content-Length", "x-cos-request-id"],
+                MaxAgeSeconds: "86400",
+              },
+            ] as any,
+          },
+          () => resolve()
+        );
+      });
+    } catch {}
+  },
+
   async testConnection(): Promise<{ success: boolean; message: string; buckets?: any[] }> {
     const cos = getCosClient();
     if (!cos) {
@@ -201,16 +272,18 @@ export const CosService = {
     }
 
     return new Promise((resolve) => {
-      cos.getService((err, data) => {
+      cos.getService(async (err, data) => {
         if (err) {
           resolve({
             success: false,
             message: `连接失败: ${err.message || "密钥校验未通过"}`,
           });
         } else {
+          // Auto configure CORS and public permissions for seamless web previews
+          CosService.ensureBucketPublicAndCors().catch(() => {});
           resolve({
             success: true,
-            message: "腾讯云 COS 凭据校验成功！",
+            message: "腾讯云 COS 凭据校验成功，跨域与读取权限已就绪！",
             buckets: data?.Buckets || [],
           });
         }

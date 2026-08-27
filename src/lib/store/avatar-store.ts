@@ -151,6 +151,20 @@ export const AvatarStore = {
     return newAvatar;
   },
 
+  update(id: string, updates: Partial<AvatarItem>): AvatarItem | null {
+    reloadFromDisk();
+    const index = memoryAvatars.findIndex((a) => a.id === id);
+    if (index !== -1) {
+      memoryAvatars[index] = {
+        ...memoryAvatars[index],
+        ...updates,
+      };
+      persistStore();
+      return memoryAvatars[index];
+    }
+    return null;
+  },
+
   delete(id: string): boolean {
     reloadFromDisk();
     const index = memoryAvatars.findIndex((a) => a.id === id);

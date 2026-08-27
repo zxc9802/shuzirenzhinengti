@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import fs from "fs";
+import path from "path";
 import crypto from "crypto";
 
 export interface MediaProbeInfo {
@@ -304,30 +305,86 @@ export async function extractAudioFromMedia(
 }
 
 export async function extractVideoThumbnail(
-  videoPath: string,
-  outputImagePath: string
+  videoPathOrUrl: string,
+  outputImagePath: string,
+  seekSeconds = 1.0
 ): Promise<string> {
-  if (!fs.existsSync(videoPath)) {
-    throw new Error(`Video not found: ${videoPath}`);
+  const isUrl = videoPathOrUrl.startsWith("http://") || videoPathOrUrl.startsWith("https://");
+  if (!isUrl && !fs.existsSync(videoPathOrUrl)) {
+    throw new Error(`Video not found: ${videoPathOrUrl}`);
   }
 
-  const args = [
+  // Ensure output directory exists
+  const outputDir = path.dirname(outputImagePath);
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // Attempt 1: Accurate frame seek at specified second (after -i to ensure proper keyframe decoding)
+  try {
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      videoPathOrUrl,
+      "-ss",
+      `${seekSeconds}`,
+      "-vframes",
+      "1",
+      "-q:v",
+      "2",
+      outputImagePath,
+    ];
+    await execCommand("ffmpeg", args);
+    if (fs.existsSync(outputImagePath) && fs.statSync(outputImagePath).size > 100) {
+      return outputImagePath;
+    }
+  } catch (err: any) {
+    console.warn(`Seek at ${seekSeconds}s failed, trying fallback:`, err.message);
+  }
+
+  // Attempt 2: Fallback to 0.3s
+  try {
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      videoPathOrUrl,
+      "-ss",
+      "00:00:00.3",
+      "-vframes",
+      "1",
+      "-q:v",
+      "2",
+      outputImagePath,
+    ];
+    await execCommand("ffmpeg", args);
+    if (fs.existsSync(outputImagePath) && fs.statSync(outputImagePath).size > 100) {
+      return outputImagePath;
+    }
+  } catch (err: any) {
+    console.warn("Fallback to 0.3s failed:", err.message);
+  }
+
+  // Attempt 3: Fallback to very first frame (0.01s)
+  const argsFirstFrame = [
     "-hide_banner",
     "-loglevel",
     "error",
     "-y",
-    "-ss",
-    "00:00:00.3",
     "-i",
-    videoPath,
+    videoPathOrUrl,
     "-vframes",
     "1",
     "-q:v",
     "2",
     outputImagePath,
   ];
-
-  await execCommand("ffmpeg", args);
+  await execCommand("ffmpeg", argsFirstFrame);
   return outputImagePath;
 }
 

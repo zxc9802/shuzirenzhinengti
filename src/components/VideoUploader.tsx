@@ -55,24 +55,43 @@ export default function VideoUploader({
     setUploadProgress(0);
     setUploadSpeedText("准备上传...");
 
-    // Fast local video probe and blob preview
+    // Fast local video probe and blob preview + canvas thumbnail capture
     const localBlobUrl = URL.createObjectURL(file);
     const tempVideo = document.createElement("video");
     tempVideo.src = localBlobUrl;
-    tempVideo.preload = "metadata";
+    tempVideo.muted = true;
+    tempVideo.playsInline = true;
+    tempVideo.preload = "auto";
+
+    let capturedThumbBlob: Blob | null = null;
 
     const localProbePromise = new Promise<{ width: number; height: number; durationSeconds: number }>((resolve) => {
       tempVideo.onloadedmetadata = () => {
-        resolve({
-          width: tempVideo.videoWidth || 1080,
-          height: tempVideo.videoHeight || 1920,
-          durationSeconds: tempVideo.duration || 0,
-        });
+        const width = tempVideo.videoWidth || 1080;
+        const height = tempVideo.videoHeight || 1920;
+        const duration = tempVideo.duration || 0;
+        tempVideo.currentTime = Math.min(1.0, duration * 0.2);
+        resolve({ width, height, durationSeconds: duration });
       };
       tempVideo.onerror = () => {
         resolve({ width: 1080, height: 1920, durationSeconds: 0 });
       };
     });
+
+    tempVideo.onseeked = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = tempVideo.videoWidth || 720;
+        canvas.height = tempVideo.videoHeight || 1280;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (blob) capturedThumbBlob = blob;
+          }, "image/jpeg", 0.9);
+        }
+      } catch {}
+    };
 
     const localProbe = await localProbePromise;
 
@@ -81,6 +100,9 @@ export default function VideoUploader({
       formData.append("file", file);
       if (customAvatarName.trim()) {
         formData.append("name", customAvatarName.trim());
+      }
+      if (capturedThumbBlob) {
+        formData.append("thumbnail", capturedThumbBlob, "thumb.jpg");
       }
 
       // Perform upload with accurate XMLHttpRequest progress

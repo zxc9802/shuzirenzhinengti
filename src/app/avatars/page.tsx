@@ -20,9 +20,231 @@ import {
   X,
   AlertCircle,
   Video,
+  Camera,
+  Sparkles,
 } from "lucide-react";
 import { AvatarItem } from "@/lib/store/avatar-store";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
+
+// Sub-component for individual avatar card item with resilient cover display and hover preview
+function AvatarCardItem({
+  avatar,
+  onDelete,
+  onUse,
+  onCoverUpdated,
+}: {
+  avatar: AvatarItem;
+  onDelete: (id: string, e: React.MouseEvent) => void;
+  onUse: (avatar: AvatarItem) => void;
+  onCoverUpdated: (newCoverUrl: string) => void;
+}) {
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractMsg, setExtractMsg] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState(avatar.coverUrl || "");
+  const [isHovered, setIsHovered] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    setCoverUrl(avatar.coverUrl || "");
+    setImgError(false);
+  }, [avatar.coverUrl]);
+
+  const handleMouseEnter = () => {
+    setIsHovered(true);
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setIsHovered(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
+  };
+
+  const handleReExtractCover = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isExtracting) return;
+    setIsExtracting(true);
+    setExtractMsg("正在抽帧...");
+
+    try {
+      const resp = await fetch("/api/avatars/extract-cover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: avatar.id, timestamp: 1.0 }),
+      });
+      const data = await resp.json();
+      if (data.success && data.coverUrl) {
+        setCoverUrl(data.coverUrl);
+        setImgError(false);
+        onCoverUpdated(data.coverUrl);
+        setExtractMsg("封面更新成功！");
+        setTimeout(() => setExtractMsg(null), 2000);
+      } else {
+        setExtractMsg(data.error || "抽帧失败");
+        setTimeout(() => setExtractMsg(null), 3000);
+      }
+    } catch (err: any) {
+      setExtractMsg(err.message || "请求异常");
+      setTimeout(() => setExtractMsg(null), 3000);
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  return (
+    <div
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      className="group flex flex-col rounded-2xl border border-white/[0.08] bg-[#10121a]/90 hover:border-blue-500/40 hover:bg-[#121522] transition-all overflow-hidden shadow-lg"
+    >
+      {/* Video / Cover Image Preview Area */}
+      <div className="relative aspect-[9/10] w-full bg-[#08090f] overflow-hidden border-b border-white/[0.08]">
+        {/* Background Video player (plays on hover) */}
+        <video
+          ref={videoRef}
+          src={avatar.videoUrl}
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+            isHovered ? "opacity-100 z-10" : "opacity-0 z-0"
+          )}
+          muted
+          playsInline
+          loop
+          preload="metadata"
+        />
+
+        {/* Static Cover Image (visible when not hovering or loading) */}
+        {coverUrl && !imgError ? (
+          <img
+            src={coverUrl}
+            alt={avatar.name}
+            crossOrigin="anonymous"
+            onError={() => setImgError(true)}
+            className={cn(
+              "absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105",
+              isHovered ? "opacity-0" : "opacity-100"
+            )}
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-900/80">
+            <Video className="h-10 w-10 text-zinc-600 mb-2" />
+            <p className="text-xs text-zinc-400">暂无封面或正在加载</p>
+            <button
+              type="button"
+              onClick={handleReExtractCover}
+              disabled={isExtracting}
+              className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow"
+            >
+              {isExtracting ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Camera className="h-3.5 w-3.5" />
+              )}
+              <span>立即抽取封面</span>
+            </button>
+          </div>
+        )}
+
+        {/* Top Badges */}
+        <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
+          {avatar.isCos ? (
+            <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
+              <Cloud className="h-3 w-3" /> 腾讯云 COS
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 rounded-md bg-zinc-800/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-mono text-zinc-300">
+              <HardDrive className="h-3 w-3" /> 本地
+            </span>
+          )}
+        </div>
+
+        {/* Re-extract Action button on top-left hover */}
+        <div className="absolute top-2.5 left-2.5 z-20">
+          <button
+            type="button"
+            title="重新截取第1秒清晰封面"
+            onClick={handleReExtractCover}
+            disabled={isExtracting}
+            className="flex items-center gap-1 rounded-lg bg-black/70 hover:bg-blue-600 backdrop-blur-md px-2 py-1 text-[10px] font-medium text-zinc-200 hover:text-white transition-all shadow-md cursor-pointer border border-white/[0.1]"
+          >
+            {isExtracting ? (
+              <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+            ) : (
+              <Camera className="h-3 w-3" />
+            )}
+            <span>{isExtracting ? "抽帧中..." : "重新抽封面"}</span>
+          </button>
+        </div>
+
+        {/* Toast / extraction feedback */}
+        {extractMsg && (
+          <div className="absolute inset-x-3 bottom-12 z-30 flex items-center justify-center">
+            <span className="rounded-lg bg-black/90 border border-blue-500/40 px-2.5 py-1 text-[11px] font-bold text-blue-300 shadow-xl backdrop-blur-md">
+              {extractMsg}
+            </span>
+          </div>
+        )}
+
+        {/* Hover bar */}
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 backdrop-blur-sm px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-200 z-20">
+          <span className="font-medium flex items-center gap-1 text-blue-300">
+            <Play className="h-3 w-3 fill-blue-300" /> 悬停自动播放
+          </span>
+          <span className="font-mono text-zinc-300">{avatar.width}×{avatar.height}</span>
+        </div>
+      </div>
+
+      {/* Info Body */}
+      <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-bold text-sm text-zinc-100 truncate" title={avatar.name}>
+              {avatar.name}
+            </h3>
+            <button
+              type="button"
+              title="删除此形象"
+              onClick={(e) => onDelete(avatar.id, e)}
+              className="text-zinc-500 hover:text-rose-400 p-1 rounded-md transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-2.5 text-xs text-zinc-400 bg-black/30 p-2 rounded-xl border border-white/[0.05]">
+            <div className="flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 text-zinc-500" />
+              <span className="font-mono text-zinc-300">
+                {formatDuration(avatar.durationSeconds)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 text-zinc-500" />
+              <span className="font-mono text-zinc-300">
+                {avatar.fps || 30} FPS
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onUse(avatar)}
+          className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30 hover:border-blue-500 p-2.5 text-xs font-bold transition-all active:scale-[0.98] cursor-pointer"
+        >
+          <Film className="h-3.5 w-3.5" />
+          <span>选用此形象去制作数字人</span>
+          <ArrowRight className="h-3.5 w-3.5 ml-0.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function AvatarsPage() {
   const router = useRouter();
@@ -35,6 +257,8 @@ export default function AvatarsPage() {
   // Upload modal states
   const [uploadName, setUploadName] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [clientThumbBlob, setClientThumbBlob] = useState<Blob | null>(null);
+  const [clientThumbPreview, setClientThumbPreview] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -42,7 +266,7 @@ export default function AvatarsPage() {
 
   const fetchAvatars = async () => {
     try {
-      const resp = await fetch("/api/avatars");
+      const resp = await fetch(`/api/avatars?t=${Date.now()}`);
       const data = await resp.json();
       if (data.avatars) {
         setAvatars(data.avatars);
@@ -58,6 +282,51 @@ export default function AvatarsPage() {
     fetchAvatars();
   }, []);
 
+  // Capture video frame via browser canvas at 1.0s
+  const extractClientThumbnail = (file: File) => {
+    try {
+      const video = document.createElement("video");
+      const url = URL.createObjectURL(file);
+      video.src = url;
+      video.muted = true;
+      video.playsInline = true;
+      video.currentTime = 1.0;
+
+      video.onloadeddata = () => {
+        video.currentTime = Math.min(1.0, (video.duration || 2) * 0.2);
+      };
+
+      video.onseeked = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 720;
+          canvas.height = video.videoHeight || 1280;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+            setClientThumbPreview(dataUrl);
+            canvas.toBlob(
+              (blob) => {
+                if (blob) setClientThumbBlob(blob);
+              },
+              "image/jpeg",
+              0.9
+            );
+          }
+        } catch (e) {
+          console.warn("Client frame capture error:", e);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      };
+
+      video.onerror = () => {
+        URL.revokeObjectURL(url);
+      };
+    } catch {}
+  };
+
   const handleSelectFile = (file: File) => {
     if (!file) return;
     if (!file.type.startsWith("video/") && !file.name.match(/\.(mp4|mov|mkv|webm)$/i)) {
@@ -69,6 +338,7 @@ export default function AvatarsPage() {
     if (!uploadName) {
       setUploadName(file.name.replace(/\.[^/.]+$/, ""));
     }
+    extractClientThumbnail(file);
   };
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -87,6 +357,9 @@ export default function AvatarsPage() {
       formData.append("file", uploadFile);
       if (uploadName.trim()) {
         formData.append("name", uploadName.trim());
+      }
+      if (clientThumbBlob) {
+        formData.append("thumbnail", clientThumbBlob, "thumb.jpg");
       }
 
       const uploadPromise = new Promise<any>((resolve, reject) => {
@@ -128,6 +401,8 @@ export default function AvatarsPage() {
       setIsUploadModalOpen(false);
       setUploadFile(null);
       setUploadName("");
+      setClientThumbBlob(null);
+      setClientThumbPreview(null);
     } catch (err: any) {
       setUploadError(err.message || "上传失败");
     } finally {
@@ -266,104 +541,24 @@ export default function AvatarsPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredAvatars.map((avatar) => (
-            <div
+            <AvatarCardItem
               key={avatar.id}
-              className="group flex flex-col rounded-2xl border border-white/[0.08] bg-[#10121a]/90 hover:border-blue-500/40 hover:bg-[#121522] transition-all overflow-hidden shadow-lg"
-            >
-              {/* Video Preview */}
-              <div className="relative aspect-[9/10] w-full bg-black overflow-hidden border-b border-white/[0.08]">
-                <video
-                  src={`${avatar.videoUrl}#t=0.001`}
-                  poster={avatar.coverUrl}
-                  className="h-full w-full object-cover"
-                  muted
-                  playsInline
-                  preload="auto"
-                  onLoadedMetadata={(e) => {
-                    try {
-                      e.currentTarget.currentTime = 0.001;
-                    } catch {}
-                  }}
-                  onMouseOver={(e) => {
-                    try { (e.currentTarget as HTMLVideoElement).play(); } catch {}
-                  }}
-                  onMouseOut={(e) => {
-                    try {
-                      const v = e.currentTarget as HTMLVideoElement;
-                      v.pause();
-                      v.currentTime = 0.001;
-                    } catch {}
-                  }}
-                />
-
-                {/* Storage Badge */}
-                <div className="absolute top-2.5 right-2.5 z-10">
-                  {avatar.isCos ? (
-                    <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
-                      <Cloud className="h-3 w-3" /> 腾讯云 COS
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 rounded-md bg-zinc-800/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-mono text-zinc-300">
-                      <HardDrive className="h-3 w-3" /> 本地
-                    </span>
-                  )}
-                </div>
-
-                <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur-sm px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-200 z-10">
-                  <span className="font-medium">悬停自动播放</span>
-                  <span className="font-mono text-blue-300">{avatar.width}×{avatar.height}</span>
-                </div>
-              </div>
-
-              {/* Info Body */}
-              <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-bold text-sm text-zinc-100 truncate" title={avatar.name}>
-                      {avatar.name}
-                    </h3>
-                    <button
-                      type="button"
-                      title="删除此形象"
-                      onClick={(e) => handleDelete(avatar.id, e)}
-                      className="text-zinc-500 hover:text-rose-400 p-1 rounded-md transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 mt-2.5 text-xs text-zinc-400 bg-black/30 p-2 rounded-xl border border-white/[0.05]">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-zinc-500" />
-                      <span className="font-mono text-zinc-300">
-                        {formatDuration(avatar.durationSeconds)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Layers className="h-3.5 w-3.5 text-zinc-500" />
-                      <span className="font-mono text-zinc-300">
-                        {avatar.fps || 30} FPS
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleUseAvatar(avatar)}
-                  className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30 hover:border-blue-500 p-2.5 text-xs font-bold transition-all active:scale-[0.98] cursor-pointer"
-                >
-                  <Film className="h-3.5 w-3.5" />
-                  <span>选用此形象去制作数字人</span>
-                  <ArrowRight className="h-3.5 w-3.5 ml-0.5" />
-                </button>
-              </div>
-            </div>
+              avatar={avatar}
+              onDelete={handleDelete}
+              onUse={handleUseAvatar}
+              onCoverUpdated={(newCoverUrl) => {
+                setAvatars((prev) =>
+                  prev.map((a) =>
+                    a.id === avatar.id ? { ...a, coverUrl: newCoverUrl } : a
+                  )
+                );
+              }}
+            />
           ))}
         </div>
       )}
 
-      {/* Upload Modal with Drag & Drop */}
+      {/* Upload Modal with Drag & Drop & Live Thumbnail Preview */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
           <div className="relative w-full max-w-md rounded-2xl border border-white/[0.12] bg-[#10121a] p-6 shadow-2xl space-y-5">
@@ -377,7 +572,7 @@ export default function AvatarsPage() {
                     上传新口播形象视频
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    支持拖拽文件，视频将自动存入腾讯云 COS
+                    支持拖拽文件，自动提取首秒清晰封面并存入腾讯云 COS
                   </p>
                 </div>
               </div>
@@ -431,7 +626,7 @@ export default function AvatarsPage() {
                   }}
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
-                    "flex flex-col items-center justify-center p-6 rounded-xl border border-dashed transition-all cursor-pointer",
+                    "flex flex-col items-center justify-center p-5 rounded-xl border border-dashed transition-all cursor-pointer",
                     dragOver
                       ? "border-blue-500 bg-blue-500/15 ring-1 ring-blue-500/30"
                       : uploadFile
@@ -439,16 +634,34 @@ export default function AvatarsPage() {
                       : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
                   )}
                 >
-                  <UploadCloud className="h-8 w-8 text-blue-400 mb-2" />
                   {uploadFile ? (
-                    <div className="text-center">
-                      <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[260px]">
-                        已选: {uploadFile.name} ({formatBytes(uploadFile.size)})
-                      </span>
-                      <span className="text-[10px] text-zinc-400">点击或拖拽可更换其他视频</span>
+                    <div className="flex items-center gap-3 w-full">
+                      {clientThumbPreview ? (
+                        <img
+                          src={clientThumbPreview}
+                          alt="Cover preview"
+                          className="h-16 w-12 object-cover rounded-lg border border-white/20 shrink-0 shadow"
+                        />
+                      ) : (
+                        <div className="h-16 w-12 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-500 shrink-0">
+                          <Video className="h-5 w-5" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0 text-left">
+                        <span className="text-xs font-semibold text-emerald-300 block truncate">
+                          已选: {uploadFile.name}
+                        </span>
+                        <span className="text-[11px] font-mono text-zinc-400 block mt-0.5">
+                          大小: {formatBytes(uploadFile.size)}
+                        </span>
+                        <span className="text-[10px] text-blue-400 mt-1 inline-flex items-center gap-1">
+                          <Sparkles className="h-3 w-3" /> 已自动截取首秒高清封面
+                        </span>
+                      </div>
                     </div>
                   ) : (
-                    <div className="text-center">
+                    <div className="text-center py-2">
+                      <UploadCloud className="h-8 w-8 text-blue-400 mx-auto mb-2" />
                       <span className="text-xs font-semibold text-zinc-200 block">
                         {dragOver ? "释放视频文件" : "点击或拖拽口播视频文件至此处"}
                       </span>

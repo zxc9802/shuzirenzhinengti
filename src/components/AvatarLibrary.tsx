@@ -134,29 +134,22 @@ export default function AvatarLibrary({
               >
                 <div className="flex gap-3 items-center">
                   <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg bg-black border border-white/[0.08]">
-                    <video
-                      src={`${avatar.videoUrl}#t=0.001`}
-                      poster={avatar.coverUrl}
-                      className="h-full w-full object-cover"
-                      muted
-                      playsInline
-                      preload="auto"
-                      onLoadedMetadata={(e) => {
-                        try {
-                          e.currentTarget.currentTime = 0.001;
-                        } catch {}
-                      }}
-                      onMouseOver={(e) => {
-                        try { (e.currentTarget as HTMLVideoElement).play(); } catch {}
-                      }}
-                      onMouseOut={(e) => {
-                        try {
-                          const v = e.currentTarget as HTMLVideoElement;
-                          v.pause();
-                          v.currentTime = 0.001;
-                        } catch {}
-                      }}
-                    />
+                    {avatar.coverUrl ? (
+                      <img
+                        src={avatar.coverUrl}
+                        alt={avatar.name}
+                        crossOrigin="anonymous"
+                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                      />
+                    ) : (
+                      <video
+                        src={avatar.videoUrl}
+                        className="h-full w-full object-cover"
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
+                    )}
                     <div className="absolute top-1 right-1 z-10">
                       {avatar.isCos ? (
                         <span className="flex items-center gap-0.5 rounded bg-blue-500/80 px-1 py-0.2 text-[8px] font-bold text-white shadow-sm">

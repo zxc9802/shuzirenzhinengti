@@ -13,7 +13,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, videoUrl, videoPath, durationSeconds, width, height, fps, fileSize, isCos } = body;
+    const { name, videoUrl, videoPath, coverUrl, durationSeconds, width, height, fps, fileSize, isCos } = body;
 
     if (!videoUrl) {
       return NextResponse.json({ error: "视频 URL 必填" }, { status: 400 });
@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
       name: name?.trim() || "未命名口播形象",
       videoUrl,
       videoPath: videoPath || "",
+      coverUrl: coverUrl || "",
       durationSeconds: durationSeconds || 0,
       width: width || 1080,
       height: height || 1920,
@@ -32,6 +33,25 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, avatar: created });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { id, ...updates } = body;
+    if (!id) {
+      return NextResponse.json({ error: "ID 必填" }, { status: 400 });
+    }
+
+    const updated = AvatarStore.update(id, updates);
+    if (!updated) {
+      return NextResponse.json({ error: "未找到对应形象" }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true, avatar: updated });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
