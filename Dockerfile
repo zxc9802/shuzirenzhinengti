@@ -1,5 +1,5 @@
 # Stage 1: Dependencies & Build
-FROM node:20-bookworm-slim AS builder
+FROM public.ecr.aws/docker/library/node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # Stage 2: Production Runner
-FROM node:20-bookworm-slim AS runner
+FROM public.ecr.aws/docker/library/node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
