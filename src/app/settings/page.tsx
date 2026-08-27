@@ -463,16 +463,16 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
-                  HeyGen MCP 客户端通信配置
+                  HeyGen MCP 套餐调度与通信配置
                 </h2>
                 <p className="text-[11px] text-zinc-400 mt-0.5">
-                  通过 Model Context Protocol 管道调度对口型工具，无需填写 HeyGen API Key
+                  通过 Model Context Protocol 协议直接调度 HeyGen 订阅套餐，扣除账号 Premium Credits 额度
                 </p>
               </div>
             </div>
             <span className="flex items-center gap-1 text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 rounded-lg font-semibold">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-              标准 MCP 管道就绪
+              MCP 管道就绪
             </span>
           </div>
 
@@ -480,15 +480,15 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
-                  <span>HeyGen API Key</span>
-                  <span className="text-[10px] text-blue-400 font-mono">必填以驱动真实口型</span>
+                  <span>HeyGen 账号套餐 Token / 凭证</span>
+                  <span className="text-[10px] text-blue-400 font-mono">用于挂接 HeyGen 订阅套餐</span>
                 </label>
                 <div className="relative">
                   <input
                     type={showHeyGenKey ? "text" : "password"}
                     value={config.heygenApiKey || ""}
                     onChange={(e) => setConfig({ ...config, heygenApiKey: e.target.value })}
-                    placeholder="输入您的 HeyGen API Key..."
+                    placeholder="输入您的 HeyGen 账号授权 Token / Key..."
                     className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 pr-10 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
                   />
                   <button
