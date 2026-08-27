@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Users,
@@ -31,6 +30,7 @@ export default function AvatarsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   // Upload modal states
   const [uploadName, setUploadName] = useState("");
@@ -57,6 +57,19 @@ export default function AvatarsPage() {
   useEffect(() => {
     fetchAvatars();
   }, []);
+
+  const handleSelectFile = (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith("video/") && !file.name.match(/\.(mp4|mov|mkv|webm)$/i)) {
+      setUploadError("请上传 MP4 或 MOV 格式口播视频");
+      return;
+    }
+    setUploadFile(file);
+    setUploadError(null);
+    if (!uploadName) {
+      setUploadName(file.name.replace(/\.[^/.]+$/, ""));
+    }
+  };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,7 +150,6 @@ export default function AvatarsPage() {
   };
 
   const handleUseAvatar = (avatar: AvatarItem) => {
-    // Store selected avatar for workbench
     localStorage.setItem(
       "preselected_avatar",
       JSON.stringify({
@@ -173,7 +185,7 @@ export default function AvatarsPage() {
             <span>口播形象库 (Avatar Library)</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            上传并管理您专属的口播真人视频。制作数字人时，可一键选用此处的任意形象进行对口型渲染，自动同步腾讯云 COS 高速分发。
+            支持拖拽上传或选择口播真人视频。制作数字人时，可一键选用此处的任意形象进行对口型渲染，自动存入腾讯云 COS 高速分发。
           </p>
         </div>
 
@@ -183,7 +195,7 @@ export default function AvatarsPage() {
           className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98] cursor-pointer"
         >
           <Plus className="h-4 w-4" />
-          <span>+ 上传新口播形象</span>
+          <span>+ 拖拽/上传新口播形象</span>
         </button>
       </div>
 
@@ -212,13 +224,35 @@ export default function AvatarsPage() {
           <span>正在加载形象库...</span>
         </div>
       ) : filteredAvatars.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed border-white/[0.1] bg-[#10121a]/50 text-center space-y-3">
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+              handleSelectFile(e.dataTransfer.files[0]);
+              setIsUploadModalOpen(true);
+            }
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed text-center space-y-3 transition-all",
+            dragOver
+              ? "border-blue-500 bg-blue-500/15 shadow-xl ring-2 ring-blue-500/30"
+              : "border-white/[0.1] bg-[#10121a]/50"
+          )}
+        >
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.1] text-zinc-400">
-            <Users className="h-7 w-7 text-blue-400" />
+            <UploadCloud className="h-7 w-7 text-blue-400" />
           </div>
-          <h3 className="text-sm font-bold text-zinc-200">形象库暂无素材</h3>
+          <h3 className="text-sm font-bold text-zinc-200">
+            {dragOver ? "释放视频文件即可添加至形象库" : "形象库暂无素材"}
+          </h3>
           <p className="text-xs text-zinc-500 max-w-sm">
-            点击右上角上传口播视频，文件将自动存入腾讯云 COS 新加坡存储桶，随时用于生成逼真数字人。
+            支持拖拽 MP4 / MOV 视频文件至此处，自动存入腾讯云 COS 新加坡存储桶。
           </p>
           <button
             type="button"
@@ -315,7 +349,7 @@ export default function AvatarsPage() {
         </div>
       )}
 
-      {/* Upload Modal */}
+      {/* Upload Modal with Drag & Drop */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
           <div className="relative w-full max-w-md rounded-2xl border border-white/[0.12] bg-[#10121a] p-6 shadow-2xl space-y-5">
@@ -329,7 +363,7 @@ export default function AvatarsPage() {
                     上传新口播形象视频
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    视频将自动存入腾讯云 COS 并在形象库中归档
+                    支持拖拽文件，视频将自动存入腾讯云 COS
                   </p>
                 </div>
               </div>
@@ -364,18 +398,29 @@ export default function AvatarsPage() {
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
-                      setUploadFile(e.target.files[0]);
-                      if (!uploadName) {
-                        setUploadName(e.target.files[0].name.replace(/\.[^/.]+$/, ""));
-                      }
+                      handleSelectFile(e.target.files[0]);
                     }
                   }}
                 />
                 <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOver(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      handleSelectFile(e.dataTransfer.files[0]);
+                    }
+                  }}
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
                     "flex flex-col items-center justify-center p-6 rounded-xl border border-dashed transition-all cursor-pointer",
-                    uploadFile
+                    dragOver
+                      ? "border-blue-500 bg-blue-500/15 ring-1 ring-blue-500/30"
+                      : uploadFile
                       ? "border-emerald-500/50 bg-emerald-500/[0.06] text-emerald-300"
                       : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
                   )}
@@ -386,12 +431,12 @@ export default function AvatarsPage() {
                       <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[260px]">
                         已选: {uploadFile.name} ({formatBytes(uploadFile.size)})
                       </span>
-                      <span className="text-[10px] text-zinc-400">点击可更换其他视频文件</span>
+                      <span className="text-[10px] text-zinc-400">点击或拖拽可更换其他视频</span>
                     </div>
                   ) : (
                     <div className="text-center">
                       <span className="text-xs font-semibold text-zinc-200 block">
-                        点击选择口播视频文件
+                        {dragOver ? "释放视频文件" : "点击或拖拽口播视频文件至此处"}
                       </span>
                       <span className="text-[10px] text-zinc-400 block mt-0.5">
                         支持 MP4 / MOV 格式，建议正面清晰、嘴部无遮挡

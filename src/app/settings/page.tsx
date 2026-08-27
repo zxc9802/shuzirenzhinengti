@@ -58,6 +58,16 @@ export default function SettingsPage() {
   const [inputMode, setInputMode] = useState<"file" | "url">("file");
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [voiceModalError, setVoiceModalError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleSelectFile = (file: File) => {
+    if (!file) return;
+    setAudioFile(file);
+    setVoiceModalError(null);
+    if (!voiceName) {
+      setVoiceName(file.name.replace(/\.[^/.]+$/, ""));
+    }
+  };
 
   // COS Test State
   const [testingCos, setTestingCos] = useState(false);
@@ -714,22 +724,33 @@ export default function SettingsPage() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="audio/mp3,audio/wav,audio/m4a,audio/aac,audio/*"
+                    accept="audio/*,video/*,.mp4,.mov,.m4a,.mp3,.wav,.webm,.mkv"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
-                        setAudioFile(e.target.files[0]);
-                        if (!voiceName) {
-                          setVoiceName(e.target.files[0].name.replace(/\.[^/.]+$/, ""));
-                        }
+                        handleSelectFile(e.target.files[0]);
                       }
                     }}
                   />
                   <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOver(true);
+                    }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOver(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleSelectFile(e.dataTransfer.files[0]);
+                      }
+                    }}
                     onClick={() => fileInputRef.current?.click()}
                     className={cn(
                       "flex flex-col items-center justify-center p-5 rounded-xl border border-dashed transition-all cursor-pointer",
-                      audioFile
+                      dragOver
+                        ? "border-blue-500 bg-blue-500/15 ring-1 ring-blue-500/30"
+                        : audioFile
                         ? "border-emerald-500/50 bg-emerald-500/[0.06] text-emerald-300"
                         : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
                     )}
@@ -740,15 +761,19 @@ export default function SettingsPage() {
                         <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[240px]">
                           已选: {audioFile.name}
                         </span>
-                        <span className="text-[10px] text-zinc-400">点击可更换其他音频文件</span>
+                        <span className="text-[10px] text-zinc-400">
+                          {audioFile.type.startsWith("video/") || audioFile.name.match(/\.(mp4|mov|mkv)$/i)
+                            ? "✨ 检测到视频文件，将自动提取音频"
+                            : "点击或拖拽可更换其他文件"}
+                        </span>
                       </div>
                     ) : (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-zinc-200 block">
-                          点击上传参考音频
+                          {dragOver ? "释放文件即可上传" : "点击或拖拽录音/视频文件至此处"}
                         </span>
                         <span className="text-[10px] text-zinc-400 block mt-0.5">
-                          支持 MP3 / WAV / M4A 格式，建议 5~15 秒单人纯净人声
+                          支持 MP3/WAV 录音，或直接拖入 MP4/MOV 视频（自动提取人声）
                         </span>
                       </div>
                     )}

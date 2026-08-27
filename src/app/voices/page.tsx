@@ -21,7 +21,7 @@ import {
   Film,
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 export default function VoicesPage() {
   const router = useRouter();
@@ -30,6 +30,8 @@ export default function VoicesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [modalDragOver, setModalDragOver] = useState(false);
 
   // Upload modal state
   const [voiceName, setVoiceName] = useState("");
@@ -60,6 +62,15 @@ export default function VoicesPage() {
   useEffect(() => {
     fetchVoices();
   }, []);
+
+  const handleSelectFile = (file: File) => {
+    if (!file) return;
+    setAudioFile(file);
+    setUploadError(null);
+    if (!voiceName) {
+      setVoiceName(file.name.replace(/\.[^/.]+$/, ""));
+    }
+  };
 
   const handlePlayVoice = (voice: VoiceItem, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -161,7 +172,7 @@ export default function VoicesPage() {
             <span>发音人声音库 (Voice Library)</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            上传录音或口播视频（系统自动提取音频），克隆专属发音人音色，并自动存入腾讯云 COS 新加坡存储桶。
+            支持拖拽上传录音或口播视频（系统自动提取高清人声），克隆专属发音人音色，并自动存入腾讯云 COS。
           </p>
         </div>
 
@@ -171,7 +182,7 @@ export default function VoicesPage() {
           className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98] cursor-pointer"
         >
           <Plus className="h-4 w-4" />
-          <span>+ 上传音频/视频提取声音</span>
+          <span>+ 拖拽/上传音频或视频提取声音</span>
         </button>
       </div>
 
@@ -200,13 +211,35 @@ export default function VoicesPage() {
           <span>正在加载声音库...</span>
         </div>
       ) : filteredVoices.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed border-white/[0.1] bg-[#10121a]/50 text-center space-y-3">
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+              handleSelectFile(e.dataTransfer.files[0]);
+              setIsUploadModalOpen(true);
+            }
+          }}
+          className={cn(
+            "flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed text-center space-y-3 transition-all",
+            dragOver
+              ? "border-blue-500 bg-blue-500/15 shadow-xl ring-2 ring-blue-500/30"
+              : "border-white/[0.1] bg-[#10121a]/50"
+          )}
+        >
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.1] text-zinc-400">
-            <Mic className="h-7 w-7 text-blue-400" />
+            <UploadCloud className="h-7 w-7 text-blue-400" />
           </div>
-          <h3 className="text-sm font-bold text-zinc-200">声音库暂无素材</h3>
+          <h3 className="text-sm font-bold text-zinc-200">
+            {dragOver ? "释放音频或视频文件即可添加声音" : "声音库暂无素材"}
+          </h3>
           <p className="text-xs text-zinc-500 max-w-sm">
-            支持上传 5~15 秒录音或直接上传口播视频，系统会自动提取音频克隆发音人音色。
+            支持拖拽 MP3 / WAV 录音，或直接拖入 MP4 / MOV 视频文件，系统将自动抽离音频存入腾讯云 COS。
           </p>
           <button
             type="button"
@@ -299,7 +332,7 @@ export default function VoicesPage() {
         </div>
       )}
 
-      {/* Upload Voice Modal */}
+      {/* Upload Voice Modal with Drag & Drop */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
           <div className="relative w-full max-w-md rounded-2xl border border-white/[0.12] bg-[#10121a] p-6 shadow-2xl space-y-5">
@@ -313,7 +346,7 @@ export default function VoicesPage() {
                     上传录音或口播视频提取声音
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    支持直接上传 MP4/MOV 视频，系统将自动抽取音频存入 COS
+                    支持拖拽文件，音频将自动抽离并存入腾讯云 COS
                   </p>
                 </div>
               </div>
@@ -377,18 +410,29 @@ export default function VoicesPage() {
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
-                        setAudioFile(e.target.files[0]);
-                        if (!voiceName) {
-                          setVoiceName(e.target.files[0].name.replace(/\.[^/.]+$/, ""));
-                        }
+                        handleSelectFile(e.target.files[0]);
                       }
                     }}
                   />
                   <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setModalDragOver(true);
+                    }}
+                    onDragLeave={() => setModalDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setModalDragOver(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleSelectFile(e.dataTransfer.files[0]);
+                      }
+                    }}
                     onClick={() => fileInputRef.current?.click()}
                     className={cn(
                       "flex flex-col items-center justify-center p-5 rounded-xl border border-dashed transition-all cursor-pointer",
-                      audioFile
+                      modalDragOver
+                        ? "border-blue-500 bg-blue-500/15 ring-1 ring-blue-500/30"
+                        : audioFile
                         ? "border-emerald-500/50 bg-emerald-500/[0.06] text-emerald-300"
                         : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
                     )}
@@ -397,21 +441,21 @@ export default function VoicesPage() {
                     {audioFile ? (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-emerald-300 block truncate max-w-[240px]">
-                          已选: {audioFile.name}
+                          已选: {audioFile.name} ({formatBytes(audioFile.size)})
                         </span>
                         <span className="text-[10px] text-zinc-400">
                           {audioFile.type.startsWith("video/") || audioFile.name.match(/\.(mp4|mov|mkv)$/i)
                             ? "✨ 检测到视频文件，将自动提取人声音频"
-                            : "点击可更换其他文件"}
+                            : "点击或拖拽可更换其他文件"}
                         </span>
                       </div>
                     ) : (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-zinc-200 block">
-                          点击上传录音或口播视频
+                          {modalDragOver ? "释放文件即可上传" : "点击或拖拽录音/视频文件至此处"}
                         </span>
                         <span className="text-[10px] text-zinc-400 block mt-0.5">
-                          支持 MP3 / WAV / M4A 音频，或直接上传 MP4 / MOV 视频
+                          支持 MP3 / WAV 录音，或直接拖入 MP4 / MOV 视频
                         </span>
                       </div>
                     )}
@@ -462,8 +506,8 @@ export default function VoicesPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={uploading}
-                  className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                  disabled={uploading || !audioFile && !customAudioUrl.trim()}
+                  className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                 >
                   {uploading ? (
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />

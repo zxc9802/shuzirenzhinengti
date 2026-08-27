@@ -42,9 +42,19 @@ export default function VoiceSelector({
   const [inputMode, setInputMode] = useState<"file" | "url">("file");
   const [uploading, setUploading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSelectFile = (file: File) => {
+    if (!file) return;
+    setAudioFile(file);
+    setModalError(null);
+    if (!voiceName) {
+      setVoiceName(file.name.replace(/\.[^/.]+$/, ""));
+    }
+  };
 
   const fetchVoices = async () => {
     try {
@@ -350,10 +360,24 @@ export default function VoiceSelector({
                     }}
                   />
                   <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOver(true);
+                    }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOver(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleSelectFile(e.dataTransfer.files[0]);
+                      }
+                    }}
                     onClick={() => fileInputRef.current?.click()}
                     className={cn(
                       "flex flex-col items-center justify-center p-5 rounded-xl border border-dashed transition-all cursor-pointer",
-                      audioFile
+                      dragOver
+                        ? "border-blue-500 bg-blue-500/15 ring-1 ring-blue-500/30"
+                        : audioFile
                         ? "border-emerald-500/50 bg-emerald-500/[0.06] text-emerald-300"
                         : "border-white/[0.12] bg-black/30 hover:border-blue-500/50 text-zinc-400"
                     )}
@@ -367,16 +391,16 @@ export default function VoiceSelector({
                         <span className="text-[10px] text-zinc-400">
                           {audioFile.type.startsWith("video/") || audioFile.name.match(/\.(mp4|mov|mkv)$/i)
                             ? "✨ 检测到视频文件，将自动提取音频存入声音库"
-                            : "点击可更换其他文件"}
+                            : "点击或拖拽可更换其他文件"}
                         </span>
                       </div>
                     ) : (
                       <div className="text-center">
                         <span className="text-xs font-semibold text-zinc-200 block">
-                          点击上传录音或口播视频
+                          {dragOver ? "释放文件即可上传" : "点击或拖拽录音/视频文件至此处"}
                         </span>
                         <span className="text-[10px] text-zinc-400 block mt-0.5">
-                          支持 MP3/WAV 录音，或直接上传 MP4/MOV 视频（自动提取人声）
+                          支持 MP3/WAV 录音，或直接拖入 MP4/MOV 视频（自动提取人声）
                         </span>
                       </div>
                     )}
