@@ -3,6 +3,7 @@
 /**
  * Built-in Standard MCP Server for HeyGen Precision Lip-sync
  * Implements Model Context Protocol (MCP) Stdio JSON-RPC 2.0 Specification
+ * Bridges directly to HeyGen Official Lip-Sync Cloud API
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -26,7 +27,30 @@ const server = new Server(
   }
 );
 
-// Local in-memory / file task registry for idempotency and status
+// Read settings from .settings.json or process.env
+function getApiKey() {
+  try {
+    const settingsPath = path.join(process.cwd(), ".settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const data = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      if (data.heygenApiKey) return data.heygenApiKey.trim();
+    }
+  } catch {}
+  return (process.env.HEYGEN_API_KEY || "").trim();
+}
+
+function getApiBaseUrl() {
+  try {
+    const settingsPath = path.join(process.cwd(), ".settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const data = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      if (data.heygenApiBaseUrl) return data.heygenApiBaseUrl.trim().replace(/\/$/, "");
+    }
+  } catch {}
+  return (process.env.HEYGEN_API_BASE_URL || "https://api.heygen.com").trim().replace(/\/$/, "");
+}
+
+// Local in-memory task registry for tracking & status
 const tasks = new Map();
 
 // Tool Definitions
@@ -96,6 +120,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Tool Handlers
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  const apiKey = getApiKey();
+  const baseUrl = getApiBaseUrl();
 
   if (name === "create_lipsync" || name === "heygen_create_lipsync") {
     const videoUrl = args?.video_url;
@@ -103,49 +129,68 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const title = args?.title || `lipsync_${Date.now()}`;
 
     if (!videoUrl || !audioUrl) {
-      throw new Error("Missing required parameters: video_url and audio_url");
+      throw new Error("缺少必要参数: video_url 和 audio_url");
     }
 
-    // Check if task with same title already exists
-    for (const [id, t] of tasks.entries()) {
-      if (t.title === title && t.status !== "failed") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                lipsync_id: id,
-                status: t.status,
-                reused: true,
-              }),
-            },
-          ],
-        };
+    if (!apiKey) {
+      throw new Error(
+        "未配置 HeyGen API Key！请进入【系统配置】页面填入您的 HeyGen API Key (或在环境变量中设置 HEYGEN_API_KEY)，以调用官方云端对口型 AI 引擎生成唇形。"
+      );
+    }
+
+    // Call Real HeyGen API
+    // Try V1 Lip-sync endpoint: POST https://api.heygen.com/v1/video/lipsync
+    const heygenPayload = {
+      video_url: videoUrl,
+      audio_url: audioUrl,
+      title,
+      mode: "precision",
+    };
+
+    let lipsyncId = "";
+    let status = "processing";
+
+    try {
+      const resp = await fetch(`${baseUrl}/v1/video/lipsync`, {
+        method: "POST",
+        headers: {
+          "X-Api-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(heygenPayload),
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok || (data.code && data.code !== 100)) {
+        throw new Error(
+          `HeyGen API 提交错误 (${resp.status}): ${data.message || data.error || JSON.stringify(data)}`
+        );
       }
+
+      lipsyncId =
+        data.data?.video_id ||
+        data.data?.lipsync_id ||
+        data.data?.id ||
+        data.video_id ||
+        data.lipsync_id ||
+        data.id;
+
+      if (!lipsyncId) {
+        throw new Error(`HeyGen API 响应中未找到任务 ID: ${JSON.stringify(data)}`);
+      }
+    } catch (apiErr) {
+      throw new Error(`调用 HeyGen 对口型接口失败: ${apiErr.message}`);
     }
 
-    const lipsyncId = `lipsync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const taskRecord = {
+    tasks.set(lipsyncId, {
       id: lipsyncId,
       title,
       video_url: videoUrl,
       audio_url: audioUrl,
       status: "processing",
       created_at: Date.now(),
-      completed_at: null,
-      video_result_url: null,
-    };
-    tasks.set(lipsyncId, taskRecord);
-
-    // Simulate completion / processing (or HeyGen API bridge)
-    setTimeout(() => {
-      const rec = tasks.get(lipsyncId);
-      if (rec) {
-        rec.status = "completed";
-        rec.completed_at = Date.now();
-        rec.video_result_url = videoUrl; // Delivers aligned video
-      }
-    }, 8000);
+    });
 
     return {
       content: [
@@ -165,38 +210,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "get_lipsync" || name === "heygen_get_lipsync") {
     const lipsyncId = args?.lipsync_id;
     if (!lipsyncId) {
-      throw new Error("lipsync_id is required");
+      throw new Error("lipsync_id 必填");
     }
 
-    const taskRecord = tasks.get(lipsyncId);
-    if (!taskRecord) {
-      // Return completed with fallback
+    if (!apiKey) {
+      throw new Error("缺少 HEYGEN_API_KEY，无法查询 HeyGen 任务状态");
+    }
+
+    try {
+      const resp = await fetch(`${baseUrl}/v1/video_status.get?video_id=${lipsyncId}`, {
+        method: "GET",
+        headers: {
+          "X-Api-Key": apiKey,
+        },
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        throw new Error(`查询 HeyGen 任务失败 (${resp.status}): ${data.message || JSON.stringify(data)}`);
+      }
+
+      const remoteStatus = (data.data?.status || data.status || "processing").toLowerCase();
+      const videoResultUrl = data.data?.video_url || data.data?.url || data.video_url;
+
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
               lipsync_id: lipsyncId,
-              status: "completed",
-              video_url: args?.video_url || null,
+              status: remoteStatus,
+              video_url: videoResultUrl || null,
+              error_detail: data.data?.error || data.error || null,
             }),
           },
         ],
       };
+    } catch (getErr) {
+      throw new Error(`获取 HeyGen 任务状态异常: ${getErr.message}`);
     }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            lipsync_id: lipsyncId,
-            status: taskRecord.status,
-            video_url: taskRecord.video_result_url,
-          }),
-        },
-      ],
-    };
   }
 
   if (name === "list_lipsyncs" || name === "heygen_list_lipsyncs") {
@@ -214,7 +267,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
-  throw new Error(`Unknown tool: ${name}`);
+  throw new Error(`未知 MCP 工具: ${name}`);
 });
 
 async function main() {
@@ -223,6 +276,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("MCP Server Error:", err);
+  console.error("HeyGen MCP Server Fatal Error:", err);
   process.exit(1);
 });

@@ -22,6 +22,8 @@ import {
   Cloud,
   Layers,
   Zap,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
 import { cn } from "@/lib/utils";
@@ -77,6 +79,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showHeyGenKey, setShowHeyGenKey] = useState(false);
 
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -474,6 +477,44 @@ export default function SettingsPage() {
           </div>
 
           <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
+                  <span>HeyGen API Key</span>
+                  <span className="text-[10px] text-blue-400 font-mono">必填以驱动真实口型</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showHeyGenKey ? "text" : "password"}
+                    value={config.heygenApiKey || ""}
+                    onChange={(e) => setConfig({ ...config, heygenApiKey: e.target.value })}
+                    placeholder="输入您的 HeyGen API Key..."
+                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 pr-10 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowHeyGenKey(!showHeyGenKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                  >
+                    {showHeyGenKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">
+                  HeyGen API Base URL
+                </label>
+                <input
+                  type="text"
+                  value={config.heygenApiBaseUrl || "https://api.heygen.com"}
+                  onChange={(e) => setConfig({ ...config, heygenApiBaseUrl: e.target.value })}
+                  placeholder="https://api.heygen.com"
+                  className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="text-xs font-medium text-zinc-300 mb-2 block">
                 MCP 传输模式 (Transport)

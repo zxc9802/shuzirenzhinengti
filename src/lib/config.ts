@@ -7,6 +7,8 @@ export interface AppConfig {
   indexttsSpeakerAudioUrl: string;
   indexttsEmotionAudioPath: string;
   indexttsEmotionAudioUrl: string;
+  heygenApiKey: string;
+  heygenApiBaseUrl: string;
   heygenMcpServerUrl: string;
   heygenMcpServerCommand: string;
   heygenMcpServerArgs: string[];
@@ -85,6 +87,10 @@ const DEFAULT_CONFIG: AppConfig = {
     process.env.INDEXTTS_EMOTION_AUDIO_URL ||
     skillDefaults.indexttsEmotionAudioUrl ||
     "https://file.302.ai/gpt/imgs/20260820/d9b8f707580993f36fe037e7e9540938.wav",
+  heygenApiKey:
+    process.env.HEYGEN_API_KEY || "",
+  heygenApiBaseUrl:
+    process.env.HEYGEN_API_BASE_URL || "https://api.heygen.com",
   heygenMcpServerUrl:
     process.env.HEYGEN_MCP_SERVER_URL || "http://localhost:8000/sse",
   heygenMcpServerCommand:
