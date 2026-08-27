@@ -11,6 +11,7 @@ import {
 } from "./ffmpeg";
 import { preflightHeyGenMedia } from "./preflight";
 import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
+import { CosService } from "../cos";
 
 export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
   const task = TaskStore.get(taskId);
@@ -186,6 +187,28 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       "utf-8"
     );
 
+    // Upload final video, audio, evidence to Tencent Cloud COS if configured
+    let finalVideoUrl = `/jobs/${taskId}/final.mp4`;
+    let exactAudioUrl = `/jobs/${taskId}/exact-final-indextts.wav`;
+    let evidenceJsonUrl = `/jobs/${taskId}/evidence.json`;
+
+    if (CosService.isConfigured()) {
+      try {
+        log("☁️ 正在将合成的数字人成片上传至腾讯云 COS 永久存储...", "info");
+        const cosVideoKey = `jobs/${taskId}/final.mp4`;
+        finalVideoUrl = await CosService.uploadFile(finalVideoPath, cosVideoKey);
+        log(`✅ 成片已成功存储至腾讯云 COS: ${finalVideoUrl}`, "success");
+
+        const cosAudioKey = `jobs/${taskId}/exact-final-indextts.wav`;
+        exactAudioUrl = await CosService.uploadFile(ttsResult.finalWavPath, cosAudioKey);
+
+        const cosEvidenceKey = `jobs/${taskId}/evidence.json`;
+        evidenceJsonUrl = await CosService.uploadFile(evidencePath, cosEvidenceKey);
+      } catch (cosErr: any) {
+        log(`⚠️ 腾讯云 COS 上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
+      }
+    }
+
     // Done!
     currentStep = "done";
     TaskStore.update(taskId, {
@@ -194,9 +217,9 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       progress: 100,
       results: {
         originalVideoUrl: task.inputs.videoUrl || `/jobs/${taskId}/${path.basename(task.inputs.videoPath)}`,
-        finalVideoUrl: `/jobs/${taskId}/final.mp4`,
-        exactAudioUrl: `/jobs/${taskId}/exact-final-indextts.wav`,
-        evidenceJsonUrl: `/jobs/${taskId}/evidence.json`,
+        finalVideoUrl,
+        exactAudioUrl,
+        evidenceJsonUrl,
         heygenLipsyncId: heygenResult.lipsyncId,
         videoDuration: finalProbe.durationSeconds,
         audioDuration: ttsResult.selectedDuration,
