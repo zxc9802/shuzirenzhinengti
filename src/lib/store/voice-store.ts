@@ -12,6 +12,7 @@ export interface VoiceItem {
 }
 
 const VOICES_FILE_PATH = path.join(process.cwd(), ".voices.json");
+const BACKUP_VOICES_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".voices.json");
 
 const DEFAULT_VOICES: VoiceItem[] = [
   {
@@ -28,12 +29,18 @@ let memoryVoices: VoiceItem[] = [];
 
 function reloadFromDisk() {
   try {
+    let raw = "";
     if (fs.existsSync(VOICES_FILE_PATH)) {
-      const raw = fs.readFileSync(VOICES_FILE_PATH, "utf-8");
+      raw = fs.readFileSync(VOICES_FILE_PATH, "utf-8");
+    } else if (fs.existsSync(BACKUP_VOICES_PATH)) {
+      raw = fs.readFileSync(BACKUP_VOICES_PATH, "utf-8");
+      try { fs.writeFileSync(VOICES_FILE_PATH, raw, "utf-8"); } catch {}
+    }
+
+    if (raw) {
       memoryVoices = JSON.parse(raw);
     } else {
       memoryVoices = [...DEFAULT_VOICES];
-      persistStore();
     }
   } catch (e) {
     memoryVoices = [...DEFAULT_VOICES];
@@ -42,11 +49,15 @@ function reloadFromDisk() {
 
 function persistStore() {
   try {
-    fs.writeFileSync(
-      VOICES_FILE_PATH,
-      JSON.stringify(memoryVoices, null, 2),
-      "utf-8"
-    );
+    const content = JSON.stringify(memoryVoices, null, 2);
+    fs.writeFileSync(VOICES_FILE_PATH, content, "utf-8");
+
+    // Mirror to persistent mounted volume
+    try {
+      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
+      fs.mkdirSync(backupDir, { recursive: true });
+      fs.writeFileSync(BACKUP_VOICES_PATH, content, "utf-8");
+    } catch {}
   } catch (e) {
     console.error("Failed to persist voices store", e);
   }

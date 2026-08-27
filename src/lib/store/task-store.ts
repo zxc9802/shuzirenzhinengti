@@ -58,13 +58,21 @@ export interface TaskItem {
 }
 
 const STORE_PATH = path.join(process.cwd(), ".tasks.json");
+const BACKUP_STORE_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".tasks.json");
 const memoryTasks = new Map<string, TaskItem>();
 const subscribers = new Map<string, Set<(task: TaskItem) => void>>();
 
 function reloadFromDisk() {
   try {
+    let raw = "";
     if (fs.existsSync(STORE_PATH)) {
-      const raw = fs.readFileSync(STORE_PATH, "utf-8");
+      raw = fs.readFileSync(STORE_PATH, "utf-8");
+    } else if (fs.existsSync(BACKUP_STORE_PATH)) {
+      raw = fs.readFileSync(BACKUP_STORE_PATH, "utf-8");
+      try { fs.writeFileSync(STORE_PATH, raw, "utf-8"); } catch {}
+    }
+
+    if (raw) {
       const arr: TaskItem[] = JSON.parse(raw);
       for (const t of arr) {
         memoryTasks.set(t.id, t);
@@ -82,7 +90,15 @@ function persistStore() {
     const arr = Array.from(memoryTasks.values()).sort(
       (a, b) => b.createdAt - a.createdAt
     );
-    fs.writeFileSync(STORE_PATH, JSON.stringify(arr, null, 2), "utf-8");
+    const content = JSON.stringify(arr, null, 2);
+    fs.writeFileSync(STORE_PATH, content, "utf-8");
+
+    // Mirror to persistent mounted volume
+    try {
+      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
+      fs.mkdirSync(backupDir, { recursive: true });
+      fs.writeFileSync(BACKUP_STORE_PATH, content, "utf-8");
+    } catch {}
   } catch (e) {
     console.error("Failed to persist tasks store", e);
   }

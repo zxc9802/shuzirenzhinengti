@@ -16,16 +16,23 @@ export interface AvatarItem {
 }
 
 const AVATARS_FILE_PATH = path.join(process.cwd(), ".avatars.json");
+const BACKUP_AVATARS_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".avatars.json");
 let memoryAvatars: AvatarItem[] = [];
 
 function reloadFromDisk() {
   try {
+    let raw = "";
     if (fs.existsSync(AVATARS_FILE_PATH)) {
-      const raw = fs.readFileSync(AVATARS_FILE_PATH, "utf-8");
+      raw = fs.readFileSync(AVATARS_FILE_PATH, "utf-8");
+    } else if (fs.existsSync(BACKUP_AVATARS_PATH)) {
+      raw = fs.readFileSync(BACKUP_AVATARS_PATH, "utf-8");
+      try { fs.writeFileSync(AVATARS_FILE_PATH, raw, "utf-8"); } catch {}
+    }
+
+    if (raw) {
       memoryAvatars = JSON.parse(raw);
     } else {
       memoryAvatars = [];
-      persistStore();
     }
   } catch (e) {
     memoryAvatars = [];
@@ -34,11 +41,15 @@ function reloadFromDisk() {
 
 function persistStore() {
   try {
-    fs.writeFileSync(
-      AVATARS_FILE_PATH,
-      JSON.stringify(memoryAvatars, null, 2),
-      "utf-8"
-    );
+    const content = JSON.stringify(memoryAvatars, null, 2);
+    fs.writeFileSync(AVATARS_FILE_PATH, content, "utf-8");
+
+    // Mirror to persistent mounted volume
+    try {
+      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
+      fs.mkdirSync(backupDir, { recursive: true });
+      fs.writeFileSync(BACKUP_AVATARS_PATH, content, "utf-8");
+    } catch {}
   } catch (e) {
     console.error("Failed to persist avatars store", e);
   }
