@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { VoiceItem } from "@/lib/store/voice-store";
 import { cn } from "@/lib/utils";
+import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
 
 interface VoiceSelectorProps {
   selectedVoiceId?: string;
@@ -107,17 +108,27 @@ export default function VoiceSelector({
     try {
       if (inputMode === "file") {
         if (!audioFile) {
-          throw new Error("请上传 5~15 秒干净人声音频文件 (MP3/WAV/M4A)");
+          throw new Error("请上传 5~15 秒干净人声音频文件 (MP3/WAV/M4A/MP4)");
         }
-        const formData = new FormData();
-        formData.append("file", audioFile);
-        formData.append("name", voiceName.trim());
-        formData.append("description", voiceDesc.trim() || "用户自定义录制原声");
 
+        // 1. Direct upload to Tencent Cloud COS
+        const uploadResult = await uploadFileDirectToCos(
+          audioFile,
+          audioFile.name,
+          "voices"
+        );
+
+        // 2. Register to VoiceStore
         const resp = await fetch("/api/voices", {
           method: "POST",
-          body: formData,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: voiceName.trim(),
+            description: voiceDesc.trim() || "用户自定义录制原声",
+            audioUrl: uploadResult.fileUrl,
+          }),
         });
+
         const data = await resp.json();
         if (!data.success) throw new Error(data.error || "上传失败");
 

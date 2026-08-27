@@ -17,6 +17,7 @@ import {
 import { formatBytes, formatDuration } from "@/lib/utils";
 import AvatarLibrary from "./AvatarLibrary";
 import { AvatarItem } from "@/lib/store/avatar-store";
+import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
 
 interface VideoUploaderProps {
   onVideoUploaded: (videoData: {
@@ -96,54 +97,66 @@ export default function VideoUploader({
     const localProbe = await localProbePromise;
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      if (customAvatarName.trim()) {
-        formData.append("name", customAvatarName.trim());
-      }
+      // 1. Direct upload video to Tencent Cloud COS (bypasses server 413 limit)
+      const videoResult = await uploadFileDirectToCos(
+        file,
+        file.name,
+        "videos",
+        (percent) => {
+          setUploadProgress(percent);
+          setUploadSpeedText(
+            `${percent}% (${formatBytes((file.size * percent) / 100)} / ${formatBytes(file.size)})`
+          );
+        }
+      );
+
+      // 2. Direct upload client-captured thumbnail if available
+      let coverUrl = "";
       if (capturedThumbBlob) {
-        formData.append("thumbnail", capturedThumbBlob, "thumb.jpg");
+        try {
+          const thumbResult = await uploadFileDirectToCos(
+            capturedThumbBlob,
+            `${file.name.replace(/\.[^/.]+$/, "")}_thumb.jpg`,
+            "thumbnails"
+          );
+          coverUrl = thumbResult.fileUrl;
+        } catch {}
       }
 
-      // Perform upload with accurate XMLHttpRequest progress
-      const uploadPromise = new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload");
+      // 3. Register into AvatarStore
+      const displayName =
+        customAvatarName.trim() ||
+        file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\u4e00-\u9fa5 -]/g, "") ||
+        "我的口播形象";
 
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const percent = Math.round((e.loaded / e.total) * 100);
-            setUploadProgress(percent);
-            setUploadSpeedText(
-              `${percent}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`
-            );
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const res = JSON.parse(xhr.responseText);
-              if (res.success) resolve(res);
-              else reject(new Error(res.error || "上传失败"));
-            } catch {
-              reject(new Error("解析响应失败"));
-            }
-          } else {
-            reject(new Error(`上传异常 (${xhr.status})`));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("网络连接失败，请检查网络后重试"));
-        xhr.send(formData);
+      const createResp = await fetch("/api/avatars", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: displayName,
+          videoUrl: videoResult.fileUrl,
+          coverUrl,
+          durationSeconds: localProbe?.durationSeconds || 0,
+          width: localProbe?.width || 1080,
+          height: localProbe?.height || 1920,
+          fps: 30,
+          fileSize: file.size,
+          isCos: videoResult.isCos,
+        }),
       });
 
-      const data = await uploadPromise;
+      const res = await createResp.json();
+      if (!res.success) throw new Error(res.error || "添加形象失败");
 
       const finalData = {
-        ...data,
+        fileName: displayName,
+        filePath: "",
+        fileUrl: videoResult.fileUrl,
+        size: file.size,
+        isCos: videoResult.isCos,
+        avatar: res.avatar,
         previewBlobUrl: localBlobUrl,
-        probe: data.probe || {
+        probe: {
           ...localProbe,
           fps: 30,
           hasAudio: true,
@@ -151,12 +164,12 @@ export default function VideoUploader({
       };
 
       setUploadedInfo(finalData);
-      if (data.avatar?.id) setSelectedAvatarId(data.avatar.id);
+      if (res.avatar?.id) setSelectedAvatarId(res.avatar.id);
 
       onVideoUploaded({
-        name: finalData.avatar?.name || finalData.fileName,
-        path: finalData.filePath,
-        url: finalData.fileUrl,
+        name: displayName,
+        path: "",
+        url: videoResult.fileUrl,
         probe: finalData.probe,
       });
     } catch (err: any) {

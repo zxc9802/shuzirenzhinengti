@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: "300mb",
+      bodySizeLimit: "1000mb",
     },
   },
   webpack: (config) => {

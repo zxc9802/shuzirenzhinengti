@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { AvatarItem } from "@/lib/store/avatar-store";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
+import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
 
 // Sub-component for individual avatar card item with resilient cover display and hover preview
 function AvatarCardItem({
@@ -353,45 +354,52 @@ export default function AvatarsPage() {
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      if (uploadName.trim()) {
-        formData.append("name", uploadName.trim());
-      }
+      // 1. Direct upload video to Tencent Cloud COS (bypasses server 413 limit)
+      const videoResult = await uploadFileDirectToCos(
+        uploadFile,
+        uploadFile.name,
+        "videos",
+        (percent) => setUploadProgress(percent)
+      );
+
+      // 2. Direct upload client-captured thumbnail if available
+      let coverUrl = "";
       if (clientThumbBlob) {
-        formData.append("thumbnail", clientThumbBlob, "thumb.jpg");
+        try {
+          const thumbResult = await uploadFileDirectToCos(
+            clientThumbBlob,
+            `${uploadFile.name.replace(/\.[^/.]+$/, "")}_thumb.jpg`,
+            "thumbnails"
+          );
+          coverUrl = thumbResult.fileUrl;
+        } catch {}
       }
 
-      const uploadPromise = new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload");
+      // 3. Register into AvatarStore
+      const displayName =
+        uploadName.trim() ||
+        uploadFile.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\u4e00-\u9fa5 -]/g, "") ||
+        "我的口播形象";
 
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const percent = Math.round((e.loaded / e.total) * 100);
-            setUploadProgress(percent);
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const res = JSON.parse(xhr.responseText);
-              if (res.success) resolve(res);
-              else reject(new Error(res.error || "上传失败"));
-            } catch {
-              reject(new Error("解析响应失败"));
-            }
-          } else {
-            reject(new Error(`上传异常 (${xhr.status})`));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("网络连接失败，请检查网络"));
-        xhr.send(formData);
+      const createResp = await fetch("/api/avatars", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: displayName,
+          videoUrl: videoResult.fileUrl,
+          coverUrl,
+          durationSeconds: 0,
+          width: 1080,
+          height: 1920,
+          fps: 30,
+          fileSize: uploadFile.size,
+          isCos: videoResult.isCos,
+        }),
       });
 
-      const res = await uploadPromise;
+      const res = await createResp.json();
+      if (!res.success) throw new Error(res.error || "添加形象失败");
+
       if (res.avatar) {
         setAvatars((prev) => [res.avatar, ...prev]);
       } else {

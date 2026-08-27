@@ -49,6 +49,45 @@ export const CosService = {
     return `https://${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com/${cleanKey}`;
   },
 
+  async getPresignedPutUrl(
+    targetKey: string,
+    expires = 3600
+  ): Promise<{ presignedUrl: string; publicUrl: string; key: string }> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+
+    if (!cos || !config.cosBucket || !config.cosRegion) {
+      throw new Error("腾讯云 COS 未配置");
+    }
+
+    const cleanKey = targetKey.replace(/^\/+/, "");
+
+    return new Promise((resolve, reject) => {
+      cos.getObjectUrl(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+          Method: "PUT",
+          Sign: true,
+          Expires: expires,
+        },
+        (err, data) => {
+          if (err || !data?.Url) {
+            reject(new Error(`获取预签名上传地址失败: ${err?.message || "未知异常"}`));
+          } else {
+            const publicUrl = this.getPublicUrl(cleanKey);
+            resolve({
+              presignedUrl: data.Url,
+              publicUrl,
+              key: cleanKey,
+            });
+          }
+        }
+      );
+    });
+  },
+
   async uploadFile(
     localFilePath: string,
     targetKey: string,
@@ -74,9 +113,6 @@ export const CosService = {
           Region: config.cosRegion,
           Key: cleanKey,
           FilePath: localFilePath,
-          Headers: {
-            "x-cos-acl": "public-read",
-          },
           onProgress: (progressData) => {
             if (onProgress && progressData.percent) {
               onProgress(Math.round(progressData.percent * 100));
@@ -90,30 +126,7 @@ export const CosService = {
             return;
           }
 
-          // Ensure object has public-read permission
-          cos.putObjectAcl(
-            {
-              Bucket: config.cosBucket,
-              Region: config.cosRegion,
-              Key: cleanKey,
-              ACL: "public-read",
-            },
-            () => {}
-          );
-
-          let publicUrl = "";
-          if (config.cosCustomDomain) {
-            const domain = config.cosCustomDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-            publicUrl = `https://${domain}/${cleanKey}`;
-          } else if (data?.Location) {
-            publicUrl = data.Location.startsWith("http")
-              ? data.Location
-              : `https://${data.Location}`;
-          } else {
-            publicUrl = `https://${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com/${cleanKey}`;
-          }
-
-          resolve(publicUrl);
+          resolve(this.getPublicUrl(cleanKey));
         }
       );
     });
@@ -208,22 +221,27 @@ export const CosService = {
     });
   },
 
-  async setObjectAcl(key: string, acl: "private" | "public-read" = "public-read"): Promise<void> {
-    const config = getAppConfig();
+  async testConnection(): Promise<{ success: boolean; message: string; buckets?: any[] }> {
     const cos = getCosClient();
-    if (!cos || !config.cosBucket || !config.cosRegion) return;
+    if (!cos) {
+      return { success: false, message: "缺少 SecretId 或 SecretKey" };
+    }
 
-    const cleanKey = key.replace(/^\/+/, "");
     return new Promise((resolve) => {
-      cos.putObjectAcl(
-        {
-          Bucket: config.cosBucket,
-          Region: config.cosRegion,
-          Key: cleanKey,
-          ACL: acl,
-        },
-        () => resolve()
-      );
+      cos.getService((err, data) => {
+        if (err) {
+          resolve({
+            success: false,
+            message: `连接失败: ${err.message || "密钥校验未通过"}`,
+          });
+        } else {
+          resolve({
+            success: true,
+            message: "腾讯云 COS 凭据校验成功！",
+            buckets: data?.Buckets || [],
+          });
+        }
+      });
     });
   },
 
@@ -232,62 +250,23 @@ export const CosService = {
     const cos = getCosClient();
     if (!cos || !config.cosBucket || !config.cosRegion) return;
 
-    try {
-      await new Promise<void>((resolve) => {
-        cos.putBucketAcl(
-          {
-            Bucket: config.cosBucket,
-            Region: config.cosRegion,
-            ACL: "public-read",
-          },
-          () => resolve()
-        );
-      });
-
-      await new Promise<void>((resolve) => {
-        cos.putBucketCors(
-          {
-            Bucket: config.cosBucket,
-            Region: config.cosRegion,
-            CORSRules: [
-              {
-                AllowedOrigin: ["*"],
-                AllowedMethod: ["GET", "POST", "PUT", "DELETE", "HEAD"],
-                AllowedHeader: ["*"],
-                ExposeHeader: ["ETag", "Content-Length", "x-cos-request-id"],
-                MaxAgeSeconds: "86400",
-              },
-            ] as any,
-          },
-          () => resolve()
-        );
-      });
-    } catch {}
-  },
-
-  async testConnection(): Promise<{ success: boolean; message: string; buckets?: any[] }> {
-    const cos = getCosClient();
-    if (!cos) {
-      return { success: false, message: "缺少 SecretId 或 SecretKey" };
-    }
-
     return new Promise((resolve) => {
-      cos.getService(async (err, data) => {
-        if (err) {
-          resolve({
-            success: false,
-            message: `连接失败: ${err.message || "密钥校验未通过"}`,
-          });
-        } else {
-          // Auto configure CORS and public permissions for seamless web previews
-          CosService.ensureBucketPublicAndCors().catch(() => {});
-          resolve({
-            success: true,
-            message: "腾讯云 COS 凭据校验成功，跨域与读取权限已就绪！",
-            buckets: data?.Buckets || [],
-          });
-        }
-      });
+      cos.putBucketCors(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          CORSRules: [
+            {
+              AllowedOrigin: ["*"],
+              AllowedMethod: ["GET", "POST", "PUT", "DELETE", "HEAD"],
+              AllowedHeader: ["*"],
+              ExposeHeader: ["*"],
+              MaxAgeSeconds: 86400,
+            },
+          ] as any,
+        },
+        () => resolve()
+      );
     });
   },
 };
