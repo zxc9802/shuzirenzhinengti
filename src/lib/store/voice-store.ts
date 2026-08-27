@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { CosService } from "../cos";
 
 export interface VoiceItem {
   id: string;
@@ -13,6 +14,7 @@ export interface VoiceItem {
 
 const VOICES_FILE_PATH = path.join(process.cwd(), ".voices.json");
 const BACKUP_VOICES_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".voices.json");
+const COS_VOICES_KEY = "_system/voices.json";
 
 const DEFAULT_VOICES: VoiceItem[] = [
   {
@@ -26,6 +28,7 @@ const DEFAULT_VOICES: VoiceItem[] = [
 ];
 
 let memoryVoices: VoiceItem[] = [];
+let hasLoadedFromCloud = false;
 
 function reloadFromDisk() {
   try {
@@ -38,7 +41,10 @@ function reloadFromDisk() {
     }
 
     if (raw) {
-      memoryVoices = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryVoices = parsed;
+      }
     } else {
       memoryVoices = [...DEFAULT_VOICES];
     }
@@ -58,6 +64,13 @@ function persistStore() {
       fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_VOICES_PATH, content, "utf-8");
     } catch {}
+
+    // Mirror to Tencent Cloud COS
+    if (CosService.isConfigured()) {
+      CosService.saveJsonToCos(COS_VOICES_KEY, memoryVoices).catch((err) => {
+        console.warn("VoiceStore COS sync error:", err.message);
+      });
+    }
   } catch (e) {
     console.error("Failed to persist voices store", e);
   }
@@ -66,6 +79,25 @@ function persistStore() {
 reloadFromDisk();
 
 export const VoiceStore = {
+  async getAllAsync(): Promise<VoiceItem[]> {
+    reloadFromDisk();
+
+    if ((memoryVoices.length <= 1 || !hasLoadedFromCloud) && CosService.isConfigured()) {
+      try {
+        const cloudVoices = await CosService.getJsonFromCos<VoiceItem[]>(COS_VOICES_KEY);
+        if (cloudVoices && Array.isArray(cloudVoices) && cloudVoices.length > 0) {
+          memoryVoices = cloudVoices;
+          hasLoadedFromCloud = true;
+          persistStore();
+        }
+      } catch (err: any) {
+        console.warn("Failed to load voices from cloud:", err.message);
+      }
+    }
+
+    return [...memoryVoices];
+  },
+
   getAll(): VoiceItem[] {
     reloadFromDisk();
     return [...memoryVoices];
@@ -89,6 +121,7 @@ export const VoiceStore = {
       id,
       createdAt: Date.now(),
     };
+
     memoryVoices.unshift(newVoice);
     persistStore();
     return newVoice;
@@ -96,30 +129,17 @@ export const VoiceStore = {
 
   delete(id: string): boolean {
     reloadFromDisk();
-    const idx = memoryVoices.findIndex((v) => v.id === id);
-    if (idx !== -1) {
-      if (memoryVoices[idx].isDefault) {
-        throw new Error("默认音色不可删除");
-      }
-      memoryVoices.splice(idx, 1);
+    const target = memoryVoices.find((v) => v.id === id);
+    if (target && target.isDefault) {
+      throw new Error("无法删除系统预设的默认音色");
+    }
+
+    const index = memoryVoices.findIndex((v) => v.id === id);
+    if (index !== -1) {
+      memoryVoices.splice(index, 1);
       persistStore();
       return true;
     }
     return false;
-  },
-
-  setDefault(id: string): boolean {
-    reloadFromDisk();
-    let found = false;
-    for (const v of memoryVoices) {
-      if (v.id === id) {
-        v.isDefault = true;
-        found = true;
-      } else {
-        v.isDefault = false;
-      }
-    }
-    if (found) persistStore();
-    return found;
   },
 };

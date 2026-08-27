@@ -3,7 +3,7 @@ import { AvatarStore } from "@/lib/store/avatar-store";
 
 export async function GET() {
   try {
-    const avatars = AvatarStore.getAll();
+    const avatars = await AvatarStore.getAllAsync();
     return NextResponse.json({ success: true, avatars });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

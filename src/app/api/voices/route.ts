@@ -10,7 +10,7 @@ import { extractAudioFromMedia } from "@/lib/engine/ffmpeg";
 
 export async function GET() {
   try {
-    const voices = VoiceStore.getAll();
+    const voices = await VoiceStore.getAllAsync();
     return NextResponse.json({ success: true, voices });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

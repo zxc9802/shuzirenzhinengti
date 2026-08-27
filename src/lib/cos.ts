@@ -39,6 +39,16 @@ export const CosService = {
     );
   },
 
+  getPublicUrl(key: string): string {
+    const config = getAppConfig();
+    const cleanKey = key.replace(/^\/+/, "");
+    if (config.cosCustomDomain) {
+      const domain = config.cosCustomDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      return `https://${domain}/${cleanKey}`;
+    }
+    return `https://${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com/${cleanKey}`;
+  },
+
   async uploadFile(
     localFilePath: string,
     targetKey: string,
@@ -90,6 +100,95 @@ export const CosService = {
           }
 
           resolve(publicUrl);
+        }
+      );
+    });
+  },
+
+  async saveJsonToCos(key: string, data: any): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return;
+
+    const cleanKey = key.replace(/^\/+/, "");
+    const jsonStr = JSON.stringify(data, null, 2);
+
+    return new Promise((resolve, reject) => {
+      cos.putObject(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+          Body: Buffer.from(jsonStr, "utf-8"),
+          ContentType: "application/json",
+        },
+        (err) => {
+          if (err) {
+            console.warn(`Failed to sync JSON to COS (${cleanKey}):`, err.message);
+            reject(err);
+          } else {
+            resolve();
+          }
+        }
+      );
+    });
+  },
+
+  async getJsonFromCos<T>(key: string): Promise<T | null> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return null;
+
+    const cleanKey = key.replace(/^\/+/, "");
+
+    return new Promise((resolve) => {
+      cos.getObject(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+        },
+        (err, data) => {
+          if (err || !data?.Body) {
+            resolve(null);
+          } else {
+            try {
+              const bodyStr = data.Body.toString("utf-8");
+              const parsed = JSON.parse(bodyStr);
+              resolve(parsed as T);
+            } catch {
+              resolve(null);
+            }
+          }
+        }
+      );
+    });
+  },
+
+  async listFiles(prefix: string): Promise<{ key: string; size: number; lastModified: string }[]> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return [];
+
+    return new Promise((resolve) => {
+      cos.getBucket(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Prefix: prefix,
+        },
+        (err, data) => {
+          if (err || !data?.Contents) {
+            resolve([]);
+          } else {
+            resolve(
+              data.Contents.map((c: any) => ({
+                key: c.Key,
+                size: Number(c.Size || 0),
+                lastModified: c.LastModified || "",
+              }))
+            );
+          }
         }
       );
     });

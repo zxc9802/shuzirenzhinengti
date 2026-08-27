@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { CosService } from "../cos";
 
 export interface AvatarItem {
   id: string;
@@ -18,7 +19,10 @@ export interface AvatarItem {
 
 const AVATARS_FILE_PATH = path.join(process.cwd(), ".avatars.json");
 const BACKUP_AVATARS_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".avatars.json");
+const COS_AVATARS_KEY = "_system/avatars.json";
+
 let memoryAvatars: AvatarItem[] = [];
+let hasLoadedFromCloud = false;
 
 function reloadFromDisk() {
   try {
@@ -31,12 +35,13 @@ function reloadFromDisk() {
     }
 
     if (raw) {
-      memoryAvatars = JSON.parse(raw);
-    } else {
-      memoryAvatars = [];
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryAvatars = parsed;
+      }
     }
   } catch (e) {
-    memoryAvatars = [];
+    // ignore
   }
 }
 
@@ -51,6 +56,13 @@ function persistStore() {
       fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_AVATARS_PATH, content, "utf-8");
     } catch {}
+
+    // Mirror to Tencent Cloud COS for 100% persistent cloud recovery
+    if (CosService.isConfigured()) {
+      CosService.saveJsonToCos(COS_AVATARS_KEY, memoryAvatars).catch((err) => {
+        console.warn("AvatarStore COS sync error:", err.message);
+      });
+    }
   } catch (e) {
     console.error("Failed to persist avatars store", e);
   }
@@ -59,6 +71,62 @@ function persistStore() {
 reloadFromDisk();
 
 export const AvatarStore = {
+  async getAllAsync(): Promise<AvatarItem[]> {
+    reloadFromDisk();
+
+    // If local memory is empty or not yet synced with cloud, fetch from Tencent Cloud COS
+    if ((memoryAvatars.length === 0 || !hasLoadedFromCloud) && CosService.isConfigured()) {
+      try {
+        const cloudAvatars = await CosService.getJsonFromCos<AvatarItem[]>(COS_AVATARS_KEY);
+        if (cloudAvatars && Array.isArray(cloudAvatars) && cloudAvatars.length > 0) {
+          memoryAvatars = cloudAvatars;
+          hasLoadedFromCloud = true;
+          persistStore();
+        } else {
+          // If no cloud JSON, scan existing videos in COS to auto-recover!
+          const files = await CosService.listFiles("uploads/videos/");
+          if (files.length > 0) {
+            const recovered: AvatarItem[] = files.map((f, idx) => {
+              const url = CosService.getPublicUrl(f.key);
+              const fileName = path.basename(f.key);
+              const cleanName = fileName
+                .replace(/^\d+_/, "")
+                .replace(/\.[^/.]+$/, "")
+                .replace(/_/g, " ") || `形象素材 ${idx + 1}`;
+
+              const thumbKey = `uploads/thumbnails/${fileName.replace(/\.[^/.]+$/, "")}.jpg`;
+              const thumbUrl = CosService.getPublicUrl(thumbKey);
+
+              return {
+                id: `cos_recovered_${idx}_${Date.now()}`,
+                name: cleanName,
+                videoUrl: url,
+                coverUrl: thumbUrl,
+                durationSeconds: 86,
+                width: 1080,
+                height: 1920,
+                fps: 30,
+                fileSize: f.size,
+                createdAt: f.lastModified ? new Date(f.lastModified).getTime() : Date.now(),
+                isCos: true,
+              };
+            });
+
+            if (recovered.length > 0) {
+              memoryAvatars = recovered;
+              hasLoadedFromCloud = true;
+              persistStore();
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn("Failed to load avatars from cloud:", err.message);
+      }
+    }
+
+    return [...memoryAvatars].sort((a, b) => b.createdAt - a.createdAt);
+  },
+
   getAll(): AvatarItem[] {
     reloadFromDisk();
     return [...memoryAvatars].sort((a, b) => b.createdAt - a.createdAt);
@@ -77,6 +145,7 @@ export const AvatarStore = {
       id,
       createdAt: Date.now(),
     };
+
     memoryAvatars.unshift(newAvatar);
     persistStore();
     return newAvatar;
@@ -84,21 +153,12 @@ export const AvatarStore = {
 
   delete(id: string): boolean {
     reloadFromDisk();
-    const idx = memoryAvatars.findIndex((a) => a.id === id);
-    if (idx !== -1) {
-      memoryAvatars.splice(idx, 1);
+    const index = memoryAvatars.findIndex((a) => a.id === id);
+    if (index !== -1) {
+      memoryAvatars.splice(index, 1);
       persistStore();
       return true;
     }
     return false;
-  },
-
-  update(id: string, partial: Partial<AvatarItem>): AvatarItem | undefined {
-    reloadFromDisk();
-    const item = memoryAvatars.find((a) => a.id === id);
-    if (!item) return undefined;
-    Object.assign(item, partial);
-    persistStore();
-    return item;
   },
 };
