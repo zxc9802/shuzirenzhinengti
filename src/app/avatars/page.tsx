@@ -273,17 +273,31 @@ export default function AvatarsPage() {
               {/* Video Preview */}
               <div className="relative aspect-[9/10] w-full bg-black overflow-hidden border-b border-white/[0.08]">
                 <video
-                  src={avatar.videoUrl}
+                  src={`${avatar.videoUrl}#t=0.001`}
+                  poster={avatar.coverUrl}
                   className="h-full w-full object-cover"
                   muted
                   playsInline
-                  preload="metadata"
-                  onMouseOver={(e) => (e.currentTarget as HTMLVideoElement).play()}
-                  onMouseOut={(e) => (e.currentTarget as HTMLVideoElement).pause()}
+                  preload="auto"
+                  onLoadedMetadata={(e) => {
+                    try {
+                      e.currentTarget.currentTime = 0.001;
+                    } catch {}
+                  }}
+                  onMouseOver={(e) => {
+                    try { (e.currentTarget as HTMLVideoElement).play(); } catch {}
+                  }}
+                  onMouseOut={(e) => {
+                    try {
+                      const v = e.currentTarget as HTMLVideoElement;
+                      v.pause();
+                      v.currentTime = 0.001;
+                    } catch {}
+                  }}
                 />
 
                 {/* Storage Badge */}
-                <div className="absolute top-2.5 right-2.5">
+                <div className="absolute top-2.5 right-2.5 z-10">
                   {avatar.isCos ? (
                     <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
                       <Cloud className="h-3 w-3" /> 腾讯云 COS
@@ -295,7 +309,7 @@ export default function AvatarsPage() {
                   )}
                 </div>
 
-                <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-sm px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-200">
+                <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur-sm px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-200 z-10">
                   <span className="font-medium">悬停自动播放</span>
                   <span className="font-mono text-blue-300">{avatar.width}×{avatar.height}</span>
                 </div>

@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
-import { probeMedia } from "@/lib/engine/ffmpeg";
+import { probeMedia, extractVideoThumbnail } from "@/lib/engine/ffmpeg";
 import { CosService } from "@/lib/cos";
 import { AvatarStore } from "@/lib/store/avatar-store";
 
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     await pipeline(nodeReadable, writeStream);
 
     let fileUrl = `/uploads/videos/${safeName}`;
+    let coverUrl = "";
     let isCos = false;
 
     // Check media info
@@ -39,13 +40,28 @@ export async function POST(req: NextRequest) {
       console.warn("Probe warning for uploaded file:", e.message);
     }
 
-    // If Tencent Cloud COS is configured, upload to COS
+    // Extract video thumbnail frame
+    const thumbPath = path.join(uploadsDir, `${safeName}_thumb.jpg`);
+    try {
+      await extractVideoThumbnail(filePath, thumbPath);
+      coverUrl = `/uploads/videos/${safeName}_thumb.jpg`;
+    } catch (thumbErr: any) {
+      console.warn("Thumbnail extraction error:", thumbErr.message);
+    }
+
+    // If Tencent Cloud COS is configured, upload video & thumbnail to COS
     if (CosService.isConfigured()) {
       try {
         const cosKey = `uploads/videos/${safeName}`;
         const cosUrl = await CosService.uploadFile(filePath, cosKey);
         fileUrl = cosUrl;
         isCos = true;
+
+        if (fs.existsSync(thumbPath)) {
+          const cosThumbKey = `uploads/thumbnails/${safeName}.jpg`;
+          const thumbCosUrl = await CosService.uploadFile(thumbPath, cosThumbKey);
+          coverUrl = thumbCosUrl;
+        }
       } catch (cosErr: any) {
         console.warn("Tencent COS upload fallback to local:", cosErr.message);
       }
@@ -61,6 +77,7 @@ export async function POST(req: NextRequest) {
       name: displayName,
       videoUrl: fileUrl,
       videoPath: filePath,
+      coverUrl,
       durationSeconds: probe?.durationSeconds || 0,
       width: probe?.width || 1080,
       height: probe?.height || 1920,
@@ -74,6 +91,7 @@ export async function POST(req: NextRequest) {
       fileName: file.name,
       filePath,
       fileUrl,
+      coverUrl,
       size: file.size,
       probe,
       isCos,

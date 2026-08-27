@@ -303,3 +303,31 @@ export async function extractAudioFromMedia(
   return outputAudioPath;
 }
 
+export async function extractVideoThumbnail(
+  videoPath: string,
+  outputImagePath: string
+): Promise<string> {
+  if (!fs.existsSync(videoPath)) {
+    throw new Error(`Video not found: ${videoPath}`);
+  }
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-ss",
+    "00:00:00.3",
+    "-i",
+    videoPath,
+    "-vframes",
+    "1",
+    "-q:v",
+    "2",
+    outputImagePath,
+  ];
+
+  await execCommand("ffmpeg", args);
+  return outputImagePath;
+}
+

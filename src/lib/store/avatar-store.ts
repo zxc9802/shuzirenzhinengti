@@ -6,6 +6,7 @@ export interface AvatarItem {
   name: string;
   videoUrl: string;
   videoPath?: string;
+  coverUrl?: string;
   durationSeconds: number;
   width: number;
   height: number;
