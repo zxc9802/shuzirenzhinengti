@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { CosService } from "@/lib/cos";
 
 export async function GET(
   req: NextRequest,
@@ -11,10 +12,15 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const safeRelPath = slug.map((s) => path.basename(s)).join(path.sep);
-  const filePath = path.join(process.cwd(), "public", "uploads", safeRelPath);
+  const safeRelPath = slug.map((s) => path.basename(s)).join("/");
+  const filePath = path.join(process.cwd(), "public", "uploads", safeRelPath.split("/").join(path.sep));
 
   if (!fs.existsSync(filePath)) {
+    if (CosService.isConfigured()) {
+      const cosKey = `uploads/${safeRelPath}`;
+      const cosUrl = CosService.getPublicUrl(cosKey);
+      return NextResponse.redirect(cosUrl, 307);
+    }
     return new NextResponse("File not found", { status: 404 });
   }
 
