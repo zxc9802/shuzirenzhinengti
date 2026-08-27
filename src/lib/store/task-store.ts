@@ -49,6 +49,7 @@ export interface TaskItem {
     heygenLipsyncId?: string;
     lipsyncProvider?: "heygen" | "pixverse";
     lipsyncCredits?: number;
+    pixverseResultUrl?: string;
     creditsBefore?: number;
     creditsAfter?: number;
     videoDuration?: number;
@@ -127,7 +128,8 @@ export const TaskStore = {
         const cloudTasks = await CosService.getJsonFromCos<TaskItem[]>(COS_TASKS_KEY);
         if (cloudTasks && Array.isArray(cloudTasks) && cloudTasks.length > 0) {
           for (const t of cloudTasks) {
-            if (!memoryTasks.has(t.id)) {
+            const existing = memoryTasks.get(t.id);
+            if (!existing || (t.updatedAt || 0) > (existing.updatedAt || 0)) {
               memoryTasks.set(t.id, t);
             }
           }
@@ -200,6 +202,12 @@ export const TaskStore = {
     const updated: TaskItem = {
       ...existing,
       ...partial,
+      inputs: partial.inputs
+        ? { ...existing.inputs, ...partial.inputs }
+        : existing.inputs,
+      results: partial.results
+        ? { ...existing.results, ...partial.results }
+        : existing.results,
       updatedAt: Date.now(),
     };
     memoryTasks.set(id, updated);

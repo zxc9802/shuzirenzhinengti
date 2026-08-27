@@ -6,12 +6,20 @@ import { concatVideos, probeMedia, sliceMedia } from "./ffmpeg";
 import { downloadFileToDisk } from "./download-file";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
 
+export interface OpenLuxJobProgress {
+  lipsyncId: string;
+  downloadUrl?: string;
+  creditsUsed?: number;
+}
+
 export interface OpenLuxLipsyncOptions {
   videoPath: string;
   audioPath: string;
   videoUrl?: string;
   audioUrl?: string;
   onLog?: (msg: string) => void;
+  onJobCreated?: (info: OpenLuxJobProgress) => void;
+  onResultReady?: (info: OpenLuxJobProgress) => void;
 }
 
 export interface OpenLuxLipsyncResult {
@@ -184,6 +192,7 @@ export class OpenLuxLipsyncAdapter {
     onLog(
       `[PixVerse] 任务已建立 (ID: ${lipsyncId})${creditsUsed ? `，预计扣除 ${creditsUsed} credits` : ""}，开始轮询进度...`
     );
+    options.onJobCreated?.({ lipsyncId, creditsUsed });
 
     const timeoutMs = pollTimeoutMs(options.durationSeconds || 90);
     const pollDeadline = Date.now() + timeoutMs;
@@ -204,7 +213,16 @@ export class OpenLuxLipsyncAdapter {
 
         if (status === 1) {
           completedUrl = polled.url || null;
-          onLog("[PixVerse] 对口型渲染完成，正在下载成片...");
+          if (completedUrl) {
+            options.onResultReady?.({
+              lipsyncId,
+              downloadUrl: completedUrl,
+              creditsUsed,
+            });
+            onLog(`[PixVerse] 对口型渲染完成，成片地址已保存，开始下载（失败可免费恢复，不会再扣费）...`);
+          } else {
+            onLog("[PixVerse] 对口型渲染完成，正在下载成片...");
+          }
           break;
         }
         if (status === 7) {
@@ -242,6 +260,29 @@ export class OpenLuxLipsyncAdapter {
       downloadUrl: completedUrl,
       creditsUsed,
       chunkCount: 1,
+    };
+  }
+
+  public static async fetchResult(videoId: string): Promise<{
+    status: number;
+    url?: string;
+    creditsUsed?: number;
+  }> {
+    const config = getAppConfig();
+    const apiKey = config.openluxApiKey?.trim();
+    const baseUrl = (config.openluxBaseUrl || "https://api.openlux.ai").replace(/\/$/, "");
+    if (!apiKey) {
+      throw new Error("未配置 OpenLux API Key，请先在系统设置中填写");
+    }
+
+    const pollResp = await this.fetchWithRetry(`${baseUrl}/openapi/v2/video/result/${videoId}`, {
+      headers: this.headers(apiKey),
+    });
+    const polled = this.assertOk(await this.parseJson(pollResp), "查询对口型结果");
+    return {
+      status: Number(polled.status),
+      url: polled.url || undefined,
+      creditsUsed: Number(polled.credits || 0) || undefined,
     };
   }
 
@@ -319,6 +360,8 @@ export class OpenLuxLipsyncAdapter {
           durationSeconds: chunk.durationSeconds,
           outputPath: chunkOut,
           onLog,
+          onJobCreated: options.onJobCreated,
+          onResultReady: options.onResultReady,
         },
         ctx
       );

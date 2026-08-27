@@ -189,6 +189,25 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
           onLog: (m) => log(m),
+          onJobCreated: ({ lipsyncId, creditsUsed }) => {
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "pixverse",
+                lipsyncCredits: creditsUsed,
+              },
+            });
+          },
+          onResultReady: ({ lipsyncId, downloadUrl, creditsUsed }) => {
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "pixverse",
+                lipsyncCredits: creditsUsed,
+                pixverseResultUrl: downloadUrl,
+              },
+            });
+          },
         },
         jobDir
       );

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import {
   Play,
   RotateCcw,
+  RefreshCw,
   Sliders,
   FileText,
   Volume2,
@@ -45,6 +46,7 @@ export default function StudioPage() {
 
   const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 1. Initial restore on mount
@@ -255,6 +257,43 @@ export default function StudioPage() {
 
   const isRunning =
     currentTask?.status === "processing" || currentTask?.status === "pending";
+
+  const canRecoverPaidJob = Boolean(
+    currentTask &&
+      currentTask.status !== "completed" &&
+      ((currentTask.results?.heygenLipsyncId &&
+        currentTask.results.heygenLipsyncId.length > 0) ||
+        currentTask.results?.pixverseResultUrl ||
+        (currentTask.logs || []).some(
+          (entry) =>
+            entry.message.includes("任务已建立 (ID:") ||
+            entry.message.includes("正在下载成片")
+        ))
+  );
+
+  const handleRecoverPaidJob = async () => {
+    if (!currentTask?.id || recovering) return;
+    setRecovering(true);
+    setError(null);
+    try {
+      const resp = await fetch(`/api/tasks/${currentTask.id}/recover`, {
+        method: "POST",
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "恢复失败");
+      }
+      if (data.task) {
+        setCurrentTask(data.task);
+        localStorage.setItem(ACTIVE_TASK_KEY, data.task.id);
+        localStorage.setItem("cached_active_task", JSON.stringify(data.task));
+      }
+    } catch (err: any) {
+      setError(err.message || "恢复已扣费成片失败");
+    } finally {
+      setRecovering(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -502,6 +541,22 @@ export default function StudioPage() {
             progress={currentTask?.progress || 0}
             status={currentTask ? currentTask.status : "idle"}
           />
+
+          {canRecoverPaidJob && (
+            <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
+              <p className="text-xs leading-relaxed text-amber-100">
+                对口型已经渲染完成并扣过费。如果卡在「下载成片」，点下面按钮取回成片，不会再扣一次钱。
+              </p>
+              <button
+                onClick={handleRecoverPaidJob}
+                disabled={recovering}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-amber-300 disabled:opacity-60"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${recovering ? "animate-spin" : ""}`} />
+                {recovering ? "正在取回成片..." : "取回已扣费成片"}
+              </button>
+            </div>
+          )}
 
           {/* Result Player if completed */}
           {currentTask?.status === "completed" && (

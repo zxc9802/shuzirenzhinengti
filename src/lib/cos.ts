@@ -227,6 +227,24 @@ export const CosService = {
     });
   },
 
+  async objectExists(key: string): Promise<boolean> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return false;
+
+    const cleanKey = key.replace(/^\/+/, "");
+    return new Promise((resolve) => {
+      cos.headObject(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+        },
+        (err) => resolve(!err)
+      );
+    });
+  },
+
   async listFiles(prefix: string): Promise<{ key: string; size: number; lastModified: string }[]> {
     const config = getAppConfig();
     const cos = getCosClient();
