@@ -47,13 +47,41 @@ export default function StudioPage() {
 
   // 1. Initial restore on mount
   useEffect(() => {
+    // 1.1 Fast immediate restore from local storage cache
+    const cachedTaskStr = localStorage.getItem("cached_active_task");
+    if (cachedTaskStr) {
+      try {
+        const cachedTask: TaskItem = JSON.parse(cachedTaskStr);
+        if (cachedTask && cachedTask.id) {
+          setCurrentTask(cachedTask);
+          if (cachedTask.inputs) {
+            setScriptText(cachedTask.inputs.scriptText || "");
+            setToneProfile(cachedTask.inputs.toneProfile || "low");
+            setVideoFit(cachedTask.inputs.videoFit || "smart");
+            setEmotionIntensity(cachedTask.inputs.emotionIntensity ?? 0.8);
+            if (cachedTask.inputs.videoPath || cachedTask.inputs.videoUrl) {
+              setVideoData({
+                name: cachedTask.inputs.videoName || "口播素材.mp4",
+                path: cachedTask.inputs.videoPath || "",
+                url: cachedTask.inputs.videoUrl || "",
+                probe: null,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        // ignore cache parse error
+      }
+    }
+
+    // 1.2 Network sync from API
     const restoreTask = async () => {
       const savedTaskId = localStorage.getItem(ACTIVE_TASK_KEY);
       let taskToLoad: TaskItem | null = null;
 
       if (savedTaskId) {
         try {
-          const resp = await fetch(`/api/tasks/${savedTaskId}`);
+          const resp = await fetch(`/api/tasks/${savedTaskId}?t=${Date.now()}`);
           if (resp.ok) {
             const data = await resp.json();
             if (data.task) taskToLoad = data.task;
@@ -65,7 +93,7 @@ export default function StudioPage() {
 
       if (!taskToLoad) {
         try {
-          const listResp = await fetch("/api/tasks");
+          const listResp = await fetch(`/api/tasks?t=${Date.now()}`);
           if (listResp.ok) {
             const listData = await listResp.json();
             if (listData.tasks && listData.tasks.length > 0) {
@@ -79,16 +107,19 @@ export default function StudioPage() {
 
       if (taskToLoad) {
         setCurrentTask(taskToLoad);
+        localStorage.setItem(ACTIVE_TASK_KEY, taskToLoad.id);
+        localStorage.setItem("cached_active_task", JSON.stringify(taskToLoad));
+
         if (taskToLoad.inputs) {
           setScriptText(taskToLoad.inputs.scriptText || "");
           setToneProfile(taskToLoad.inputs.toneProfile || "low");
           setVideoFit(taskToLoad.inputs.videoFit || "smart");
-          setEmotionIntensity(taskToLoad.inputs.emotionIntensity || 0.8);
-          if (taskToLoad.inputs.videoPath) {
+          setEmotionIntensity(taskToLoad.inputs.emotionIntensity ?? 0.8);
+          if (taskToLoad.inputs.videoPath || taskToLoad.inputs.videoUrl) {
             setVideoData({
-              name: taskToLoad.inputs.videoName,
-              path: taskToLoad.inputs.videoPath,
-              url: taskToLoad.inputs.videoUrl,
+              name: taskToLoad.inputs.videoName || "口播素材.mp4",
+              path: taskToLoad.inputs.videoPath || "",
+              url: taskToLoad.inputs.videoUrl || "",
               probe: null,
             });
           }
@@ -137,6 +168,8 @@ export default function StudioPage() {
           const data = await resp.json();
           if (data.task && isSubscribed) {
             setCurrentTask(data.task);
+            localStorage.setItem(ACTIVE_TASK_KEY, data.task.id);
+            localStorage.setItem("cached_active_task", JSON.stringify(data.task));
           }
         }
       } catch (err) {
@@ -196,6 +229,7 @@ export default function StudioPage() {
       const json = await resp.json();
       setCurrentTask(json.task);
       localStorage.setItem(ACTIVE_TASK_KEY, json.task.id);
+      localStorage.setItem("cached_active_task", JSON.stringify(json.task));
     } catch (err: any) {
       setError(err.message || "任务启动失败");
     } finally {
@@ -205,6 +239,7 @@ export default function StudioPage() {
 
   const handleReset = () => {
     localStorage.removeItem(ACTIVE_TASK_KEY);
+    localStorage.removeItem("cached_active_task");
     setCurrentTask(null);
     setError(null);
   };
