@@ -1,20 +1,33 @@
 import fs from "fs";
 import path from "path";
 import { CosService } from "../cos";
+import { lipsyncModelName, resolveLipsyncProvider } from "../lipsync-provider";
 import { TaskItem, TaskStore } from "../store/task-store";
 import { finalizeVideo, probeMedia, sha256File } from "./ffmpeg";
 import { downloadFileToDisk } from "./download-file";
+import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { downloadPixverseResult } from "./pixverse-ingest";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 
-const PIXVERSE_JOB_RE = /任务已建立 \(ID:\s*([^，)\s]+)\)/;
+const LIPSYNC_JOB_RE = /任务已建立 \(ID:\s*([^，)\s]+)\)/;
+
+function taskLipsyncProvider(task: TaskItem) {
+  return resolveLipsyncProvider(
+    task.inputs.lipsyncProvider || task.results.lipsyncProvider,
+    "pixverse"
+  );
+}
+
+function savedResultUrl(task: TaskItem): string | undefined {
+  return task.results?.veedResultUrl || task.results?.pixverseResultUrl;
+}
 
 export function extractPixverseJobId(task: TaskItem): string | null {
   const saved = task.results?.heygenLipsyncId?.trim();
   if (saved && !saved.includes(",")) return saved;
 
   for (let i = (task.logs || []).length - 1; i >= 0; i--) {
-    const match = task.logs[i].message.match(PIXVERSE_JOB_RE);
+    const match = task.logs[i].message.match(LIPSYNC_JOB_RE);
     if (match?.[1]) return match[1];
   }
   return saved || null;
@@ -24,7 +37,7 @@ export function isRecoverableLipsyncTask(task: TaskItem): boolean {
   if (task.status === "completed" && task.results?.finalVideoUrl) return false;
   return Boolean(
     extractPixverseJobId(task) ||
-      task.results?.pixverseResultUrl ||
+      savedResultUrl(task) ||
       (task.logs || []).some((entry) => entry.message.includes("正在下载成片"))
   );
 }
@@ -72,9 +85,10 @@ async function completeFromCosFiles(task: TaskItem): Promise<TaskItem | null> {
       exactAudioUrl,
       evidenceJsonUrl,
       heygenLipsyncId: jobId || task.results.heygenLipsyncId || evidence?.lipsync?.lipsync_id,
-      lipsyncProvider: task.inputs.lipsyncProvider || task.results.lipsyncProvider || "pixverse",
+      lipsyncProvider: taskLipsyncProvider(task),
       lipsyncCredits: task.results.lipsyncCredits || evidence?.lipsync?.credits,
       pixverseResultUrl: task.results.pixverseResultUrl,
+      veedResultUrl: task.results.veedResultUrl,
       videoDuration:
         task.results.videoDuration || evidence?.media?.video?.final_duration_seconds,
       audioDuration: task.results.audioDuration,
@@ -128,8 +142,9 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
   const fromCos = await completeFromCosFiles(task);
   if (fromCos) return fromCos;
 
+  const provider = taskLipsyncProvider(task);
   const jobId = extractPixverseJobId(task);
-  const savedUrl = task.results?.pixverseResultUrl;
+  const savedUrl = savedResultUrl(task);
   if (!jobId && !savedUrl) {
     throw new Error("没有找到已扣费的对口型任务 ID，无法免费恢复");
   }
@@ -145,20 +160,35 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
   let resultUrl = savedUrl;
   let creditsUsed = task.results?.lipsyncCredits;
   if (jobId) {
-    const remote = await OpenLuxLipsyncAdapter.fetchResult(jobId);
-    if (remote.status !== 1 || !remote.url) {
-      throw new Error(`对口型结果还不能下载（status=${remote.status}）`);
+    if (provider === "veed") {
+      const remote = await FalVeedLipsyncAdapter.fetchResult(jobId);
+      if (remote.status !== "COMPLETED" || !remote.url) {
+        throw new Error(`对口型结果还不能下载（status=${remote.status}）`);
+      }
+      resultUrl = remote.url;
+      TaskStore.update(taskId, {
+        results: {
+          heygenLipsyncId: jobId,
+          lipsyncProvider: "veed",
+          veedResultUrl: resultUrl,
+        },
+      });
+    } else {
+      const remote = await OpenLuxLipsyncAdapter.fetchResult(jobId);
+      if (remote.status !== 1 || !remote.url) {
+        throw new Error(`对口型结果还不能下载（status=${remote.status}）`);
+      }
+      resultUrl = remote.url;
+      creditsUsed = remote.creditsUsed || creditsUsed;
+      TaskStore.update(taskId, {
+        results: {
+          heygenLipsyncId: jobId,
+          lipsyncProvider: "pixverse",
+          lipsyncCredits: creditsUsed,
+          pixverseResultUrl: resultUrl,
+        },
+      });
     }
-    resultUrl = remote.url;
-    creditsUsed = remote.creditsUsed || creditsUsed;
-    TaskStore.update(taskId, {
-      results: {
-        heygenLipsyncId: jobId,
-        lipsyncProvider: "pixverse",
-        lipsyncCredits: creditsUsed,
-        pixverseResultUrl: resultUrl,
-      },
-    });
   }
 
   if (!resultUrl) {
@@ -172,15 +202,24 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
   const finalPath = path.join(jobDir, "final.mp4");
 
   const log = (msg: string) => TaskStore.addLog(taskId, msg, "info");
-  log("[PixVerse] 正在重新下载已渲染成片（不会再扣费）...");
-  const downloaded = await downloadPixverseResult({
-    url: resultUrl,
-    outputPath: rawPath,
-    onLog: log,
-  });
+  const providerLabel = provider === "veed" ? "VEED" : "PixVerse";
+  log(`[${providerLabel}] 正在重新下载已渲染成片（不会再扣费）...`);
+  const downloaded =
+    provider === "veed"
+      ? await downloadFileToDisk({
+          url: resultUrl,
+          outputPath: rawPath,
+          onProgress: (msg) => log(`[VEED] ${msg}`),
+        })
+      : await downloadPixverseResult({
+          url: resultUrl,
+          outputPath: rawPath,
+          onLog: log,
+        });
+  const viaRelay = "viaRelay" in downloaded ? downloaded.viaRelay : false;
   log(
-    `[PixVerse] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB${
-      downloaded.viaRelay ? "，经广州中转" : ""
+    `[${providerLabel}] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB${
+      viaRelay ? "，经广州中转" : ""
     })`
   );
 
@@ -207,9 +246,9 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
     recovered: true,
     script_text: task.inputs.scriptText,
     lipsync: {
-      provider: "pixverse",
+      provider,
       lipsync_id: jobId,
-      model: "pixverse-lipsync",
+      model: lipsyncModelName(provider),
       credits: creditsUsed,
     },
     media: {
@@ -242,9 +281,10 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
       exactAudioUrl,
       evidenceJsonUrl,
       heygenLipsyncId: jobId || task.results.heygenLipsyncId,
-      lipsyncProvider: "pixverse",
+      lipsyncProvider: provider,
       lipsyncCredits: creditsUsed,
-      pixverseResultUrl: resultUrl,
+      pixverseResultUrl: provider === "pixverse" ? resultUrl : task.results.pixverseResultUrl,
+      veedResultUrl: provider === "veed" ? resultUrl : task.results.veedResultUrl,
       videoDuration: finalProbe.durationSeconds,
       audioDuration: (await probeMedia(audioPath)).durationSeconds,
       resolution: `${finalProbe.width}x${finalProbe.height}`,

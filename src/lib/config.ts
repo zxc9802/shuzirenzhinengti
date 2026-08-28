@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import { LipsyncProvider, resolveLipsyncProvider } from "./lipsync-provider";
 
 export interface AppConfig {
   indexttsApiKey: string;
@@ -13,12 +14,14 @@ export interface AppConfig {
   heygenMcpServerCommand: string;
   heygenMcpServerArgs: string[];
   heygenMcpTransport: "sse" | "stdio" | "direct" | "remote";
-  lipsyncProvider: "heygen" | "pixverse";
+  lipsyncProvider: LipsyncProvider;
   openluxApiKey: string;
   openluxBaseUrl: string;
   openluxLipsyncModel: string;
   pixverseIngestUrl: string;
   pixverseIngestToken: string;
+  falApiKey: string;
+  falVeedModel: string;
   storageDir: string;
   publicBaseUrl: string;
 
@@ -106,13 +109,14 @@ const DEFAULT_CONFIG: AppConfig = {
     : [defaultMcpScriptPath],
   heygenMcpTransport:
     (process.env.HEYGEN_MCP_TRANSPORT as AppConfig["heygenMcpTransport"]) || "direct",
-  lipsyncProvider:
-    (process.env.LIPSYNC_PROVIDER as AppConfig["lipsyncProvider"]) || "heygen",
+  lipsyncProvider: resolveLipsyncProvider(process.env.LIPSYNC_PROVIDER, "heygen"),
   openluxApiKey: process.env.OPENLUX_API_KEY || "",
   openluxBaseUrl: process.env.OPENLUX_API_BASE_URL || "https://api.openlux.ai",
   openluxLipsyncModel: process.env.OPENLUX_LIPSYNC_MODEL || "pixverse-lipsync",
   pixverseIngestUrl: process.env.PIXVERSE_INGEST_URL || "",
   pixverseIngestToken: process.env.PIXVERSE_INGEST_TOKEN || "",
+  falApiKey: process.env.FAL_KEY || process.env.FAL_API_KEY || "",
+  falVeedModel: process.env.FAL_VEED_MODEL || "veed/lipsync",
   storageDir: path.join(process.cwd(), "public", "jobs"),
   publicBaseUrl:
     process.env.PUBLIC_BASE_URL ||

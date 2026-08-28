@@ -18,7 +18,11 @@ export async function GET(
     !task.results?.finalVideoUrl &&
     (task.step === "mcp_lipsync_submit" || task.step === "finalize") &&
     ((task.logs || []).some((entry) => entry.message.includes("正在下载成片")) ||
-      Boolean(task.results?.heygenLipsyncId || task.results?.pixverseResultUrl));
+      Boolean(
+        task.results?.heygenLipsyncId ||
+          task.results?.pixverseResultUrl ||
+          task.results?.veedResultUrl
+      ));
 
   if (stuckDownloading && CosService.isConfigured()) {
     try {

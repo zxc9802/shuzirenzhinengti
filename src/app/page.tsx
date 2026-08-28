@@ -26,6 +26,7 @@ import {
 } from "@/components";
 import { TaskItem } from "@/lib/store/task-store";
 import { VoiceItem } from "@/lib/store/voice-store";
+import { LipsyncProvider } from "@/lib/lipsync-provider";
 
 const ACTIVE_TASK_KEY = "active_lipsync_task_id";
 
@@ -42,7 +43,7 @@ export default function StudioPage() {
   const [videoFit, setVideoFit] = useState<"smart" | "preserve">("smart");
   const [emotionIntensity, setEmotionIntensity] = useState(0.8);
   const [selectedVoice, setSelectedVoice] = useState<VoiceItem | null>(null);
-  const [lipsyncProvider, setLipsyncProvider] = useState<"heygen" | "pixverse">("pixverse");
+  const [lipsyncProvider, setLipsyncProvider] = useState<LipsyncProvider>("pixverse");
 
   const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
   const [loading, setLoading] = useState(false);
@@ -250,6 +251,7 @@ export default function StudioPage() {
       ((currentTask.results?.heygenLipsyncId &&
         currentTask.results.heygenLipsyncId.length > 0) ||
         currentTask.results?.pixverseResultUrl ||
+        currentTask.results?.veedResultUrl ||
         (currentTask.logs || []).some(
           (entry) =>
             entry.message.includes("任务已建立 (ID:") ||
@@ -362,7 +364,7 @@ export default function StudioPage() {
               </span>
               对口型引擎
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <button
                 type="button"
                 onClick={() => setLipsyncProvider("pixverse")}
@@ -376,6 +378,21 @@ export default function StudioPage() {
                 <div className="text-xs font-bold text-zinc-100">PixVerse Lip Sync</div>
                 <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
                   OpenLux 直连 `pixverse-lipsync`，按秒计费，无需 HeyGen 授权
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLipsyncProvider("veed")}
+                disabled={isRunning}
+                className={`rounded-xl border p-3 text-left transition-all ${
+                  lipsyncProvider === "veed"
+                    ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
+                    : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                }`}
+              >
+                <div className="text-xs font-bold text-zinc-100">VEED Lipsync</div>
+                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                  fal.ai 队列接口 `veed/lipsync`，用公网视频和音频直链对口型
                 </div>
               </button>
               <button

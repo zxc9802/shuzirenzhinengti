@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { TaskStore } from "@/lib/store/task-store";
 import { runDigitalHumanPipeline } from "@/lib/engine/pipeline";
 import { getAppConfig } from "@/lib/config";
+import { isLipsyncProvider } from "@/lib/lipsync-provider";
 
 export async function GET() {
   const tasks = await TaskStore.getAllAsync();
@@ -47,10 +48,9 @@ export async function POST(req: NextRequest) {
         speakerVoiceId,
         speakerAudioUrl,
         emotionAudioUrl,
-        lipsyncProvider:
-          lipsyncProvider === "pixverse" || lipsyncProvider === "heygen"
-            ? lipsyncProvider
-            : getAppConfig().lipsyncProvider || "heygen",
+        lipsyncProvider: isLipsyncProvider(lipsyncProvider)
+          ? lipsyncProvider
+          : getAppConfig().lipsyncProvider || "heygen",
       },
       results: {},
     });
