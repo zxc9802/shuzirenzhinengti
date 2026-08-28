@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CosService } from "../cos";
+import { LipsyncProvider } from "../lipsync-provider";
 
 export type TaskStep =
   | "idle"
@@ -39,7 +40,7 @@ export interface TaskItem {
     speakerVoiceId?: string;
     speakerAudioUrl?: string;
     emotionAudioUrl?: string;
-    lipsyncProvider?: "heygen" | "pixverse";
+    lipsyncProvider?: LipsyncProvider;
   };
   results: {
     originalVideoUrl?: string;
@@ -47,9 +48,17 @@ export interface TaskItem {
     exactAudioUrl?: string;
     evidenceJsonUrl?: string;
     heygenLipsyncId?: string;
-    lipsyncProvider?: "heygen" | "pixverse";
+    lipsyncProvider?: LipsyncProvider;
     lipsyncCredits?: number;
     pixverseResultUrl?: string;
+    veedResultUrl?: string;
+    lipsyncChunks?: {
+      index: number;
+      lipsyncId?: string;
+      resultUrl?: string;
+      outputName?: string;
+      status: "created" | "ready" | "downloaded";
+    }[];
     creditsBefore?: number;
     creditsAfter?: number;
     videoDuration?: number;

@@ -2,7 +2,9 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { getAppConfig } from "../config";
+import { CosService } from "../cos";
 import { concatVideos, probeMedia, sliceMedia } from "./ffmpeg";
+import { downloadFileToDisk } from "./download-file";
 import { downloadPixverseResult } from "./pixverse-ingest";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
 
@@ -12,14 +14,24 @@ export interface OpenLuxJobProgress {
   creditsUsed?: number;
 }
 
+export interface OpenLuxChunkProgress {
+  index: number;
+  lipsyncId?: string;
+  resultUrl?: string;
+  outputName?: string;
+  status: "created" | "ready" | "downloaded";
+}
+
 export interface OpenLuxLipsyncOptions {
   videoPath: string;
   audioPath: string;
   videoUrl?: string;
   audioUrl?: string;
+  existingChunks?: OpenLuxChunkProgress[];
   onLog?: (msg: string) => void;
   onJobCreated?: (info: OpenLuxJobProgress) => void;
   onResultReady?: (info: OpenLuxJobProgress) => void;
+  onChunkProgress?: (chunk: OpenLuxChunkProgress) => void;
 }
 
 export interface OpenLuxLipsyncResult {
@@ -133,8 +145,10 @@ export class OpenLuxLipsyncAdapter {
   ): Promise<Response> {
     let lastError: Error | null = null;
     for (let i = 0; i < attempts; i++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20_000);
       try {
-        const resp = await fetch(url, init);
+        const resp = await fetch(url, { ...init, signal: controller.signal });
         if (resp.status >= 500 || resp.status === 429) {
           lastError = new Error(`HTTP ${resp.status}`);
           await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
@@ -142,57 +156,73 @@ export class OpenLuxLipsyncAdapter {
         }
         return resp;
       } catch (err: any) {
-        lastError = err instanceof Error ? err : new Error(String(err));
+        const name = err?.name || "";
+        const message = err instanceof Error ? err.message : String(err);
+        lastError = name === "AbortError" ? new Error("查询超时") : new Error(message);
         await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
+      } finally {
+        clearTimeout(timer);
       }
     }
     throw lastError || new Error("OpenLux 请求失败");
   }
 
   private static async executeOnce(
-    options: OpenLuxLipsyncOptions & { outputPath: string; durationSeconds?: number },
+    options: OpenLuxLipsyncOptions & {
+      outputPath: string;
+      durationSeconds?: number;
+      resumeJobId?: string;
+    },
     ctx: { apiKey: string; baseUrl: string; model: string }
   ): Promise<OpenLuxLipsyncResult> {
     const { onLog = () => {}, outputPath } = options;
     const { apiKey, baseUrl, model } = ctx;
 
-    const videoMediaId = await this.uploadMedia({
-      baseUrl,
-      apiKey,
-      filePath: options.videoPath,
-      fileUrl: options.videoUrl,
-      label: "视频",
-      onLog,
-    });
-    const audioMediaId = await this.uploadMedia({
-      baseUrl,
-      apiKey,
-      filePath: options.audioPath,
-      fileUrl: options.audioUrl,
-      label: "音频",
-      onLog,
-    });
+    let lipsyncId = String(options.resumeJobId || "").trim();
+    let creditsUsed: number | undefined;
 
-    onLog(`[PixVerse] 正在提交 pixverse-lipsync 对口型任务...`);
-    const createResp = await this.fetchWithRetry(`${baseUrl}/openapi/v2/video/lip_sync/generate`, {
-      method: "POST",
-      headers: this.headers(apiKey, { "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        model,
-        video_media_id: videoMediaId,
-        audio_media_id: audioMediaId,
-      }),
-    });
-    const created = this.assertOk(await this.parseJson(createResp), "创建对口型任务");
-    const lipsyncId = String(created.video_id || "");
-    if (!lipsyncId) {
-      throw new Error("OpenLux 未返回 video_id");
+    if (lipsyncId) {
+      onLog(`[PixVerse] 发现已扣费任务 (ID: ${lipsyncId})，跳过重新提交，继续轮询...`);
+      options.onJobCreated?.({ lipsyncId });
+    } else {
+      const videoMediaId = await this.uploadMedia({
+        baseUrl,
+        apiKey,
+        filePath: options.videoPath,
+        fileUrl: options.videoUrl,
+        label: "视频",
+        onLog,
+      });
+      const audioMediaId = await this.uploadMedia({
+        baseUrl,
+        apiKey,
+        filePath: options.audioPath,
+        fileUrl: options.audioUrl,
+        label: "音频",
+        onLog,
+      });
+
+      onLog(`[PixVerse] 正在提交 pixverse-lipsync 对口型任务...`);
+      const createResp = await this.fetchWithRetry(`${baseUrl}/openapi/v2/video/lip_sync/generate`, {
+        method: "POST",
+        headers: this.headers(apiKey, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          model,
+          video_media_id: videoMediaId,
+          audio_media_id: audioMediaId,
+        }),
+      });
+      const created = this.assertOk(await this.parseJson(createResp), "创建对口型任务");
+      lipsyncId = String(created.video_id || "");
+      if (!lipsyncId) {
+        throw new Error("OpenLux 未返回 video_id");
+      }
+      creditsUsed = Number(created.credits || 0) || undefined;
+      onLog(
+        `[PixVerse] 任务已建立 (ID: ${lipsyncId})${creditsUsed ? `，预计扣除 ${creditsUsed} credits` : ""}，开始轮询进度...`
+      );
+      options.onJobCreated?.({ lipsyncId, creditsUsed });
     }
-    const creditsUsed = Number(created.credits || 0) || undefined;
-    onLog(
-      `[PixVerse] 任务已建立 (ID: ${lipsyncId})${creditsUsed ? `，预计扣除 ${creditsUsed} credits` : ""}，开始轮询进度...`
-    );
-    options.onJobCreated?.({ lipsyncId, creditsUsed });
 
     const timeoutMs = pollTimeoutMs(options.durationSeconds || 90);
     const pollDeadline = Date.now() + timeoutMs;
@@ -231,10 +261,8 @@ export class OpenLuxLipsyncAdapter {
         if (status === 8) {
           throw new Error(`[PixVerse] 对口型生成失败${polled.ErrMsg ? `: ${polled.ErrMsg}` : ""}`);
         }
-        if (pollCount % 3 === 0) {
-          const remainMin = Math.max(1, Math.round((pollDeadline - Date.now()) / 60000));
-          onLog(`[PixVerse] 正在渲染中 (轮询第 ${pollCount} 次，最长还等 ${remainMin} 分钟)...`);
-        }
+        const remainMin = Math.max(1, Math.round((pollDeadline - Date.now()) / 60000));
+        onLog(`[PixVerse] 正在渲染中 (轮询第 ${pollCount} 次，最长还等 ${remainMin} 分钟)...`);
       } catch (err: any) {
         if (String(err.message || "").includes("内容审核") || String(err.message || "").includes("生成失败")) {
           throw err;
@@ -319,6 +347,7 @@ export class OpenLuxLipsyncAdapter {
           ...options,
           durationSeconds: audioProbe.durationSeconds,
           outputPath: rawVideoPath,
+          resumeJobId: options.existingChunks?.find((item) => item.index === 0)?.lipsyncId,
         },
         ctx
       );
@@ -329,18 +358,46 @@ export class OpenLuxLipsyncAdapter {
     const rendered: string[] = [];
     const jobIds: string[] = [];
     let creditsUsed = 0;
+    const taskId = path.basename(outDir);
+    const saved = options.existingChunks || [];
 
     for (const chunk of chunks) {
       const label = `${chunk.index + 1}/${chunks.length}`;
+      const chunkVideo = path.join(chunkDir, `video-${chunk.index}.mp4`);
+      const chunkAudio = path.join(chunkDir, `audio-${chunk.index}.wav`);
+      const chunkOut = path.join(chunkDir, `result-${chunk.index}.mp4`);
+      const outputName = `lipsync-chunks/result-${chunk.index}.mp4`;
+      const savedChunk = saved.find((item) => item.index === chunk.index);
+
+      const hasLocal =
+        fs.existsSync(chunkOut) && fs.statSync(chunkOut).size > 1024 * 1024;
+      if (!hasLocal && CosService.isConfigured()) {
+        const cosKey = `jobs/${taskId}/${outputName}`;
+        if (await CosService.objectExists(cosKey)) {
+          onLog(`[PixVerse] 第 ${label} 段已在 COS，正在取回，不重复扣费...`);
+          const pullUrl = await CosService.getDownloadUrl(cosKey, path.basename(chunkOut));
+          await downloadFileToDisk({ url: pullUrl, outputPath: chunkOut });
+        }
+      }
+
+      if (fs.existsSync(chunkOut) && fs.statSync(chunkOut).size > 1024 * 1024) {
+        onLog(`[PixVerse] 第 ${label} 段已完成，跳过重新提交`);
+        rendered.push(chunkOut);
+        if (savedChunk?.lipsyncId) jobIds.push(savedChunk.lipsyncId);
+        options.onChunkProgress?.({
+          index: chunk.index,
+          lipsyncId: savedChunk?.lipsyncId,
+          outputName,
+          status: "downloaded",
+        });
+        continue;
+      }
+
       onLog(
         `[PixVerse] 正在处理第 ${label} 段 (${chunk.startSeconds.toFixed(1)}s–${(
           chunk.startSeconds + chunk.durationSeconds
         ).toFixed(1)}s)...`
       );
-
-      const chunkVideo = path.join(chunkDir, `video-${chunk.index}.mp4`);
-      const chunkAudio = path.join(chunkDir, `audio-${chunk.index}.wav`);
-      const chunkOut = path.join(chunkDir, `result-${chunk.index}.mp4`);
 
       await sliceMedia({
         inputPath: options.videoPath,
@@ -363,15 +420,40 @@ export class OpenLuxLipsyncAdapter {
           audioPath: chunkAudio,
           durationSeconds: chunk.durationSeconds,
           outputPath: chunkOut,
+          resumeJobId: savedChunk?.lipsyncId,
           onLog,
-          onJobCreated: options.onJobCreated,
-          onResultReady: options.onResultReady,
+          onJobCreated: (info) => {
+            options.onJobCreated?.(info);
+            options.onChunkProgress?.({
+              index: chunk.index,
+              lipsyncId: info.lipsyncId,
+              outputName,
+              status: "created",
+            });
+          },
+          onResultReady: (info) => {
+            options.onResultReady?.(info);
+            options.onChunkProgress?.({
+              index: chunk.index,
+              lipsyncId: info.lipsyncId,
+              resultUrl: info.downloadUrl,
+              outputName,
+              status: "ready",
+            });
+          },
         },
         ctx
       );
       rendered.push(chunkOut);
       jobIds.push(result.lipsyncId);
       creditsUsed += result.creditsUsed || 0;
+      options.onChunkProgress?.({
+        index: chunk.index,
+        lipsyncId: result.lipsyncId,
+        resultUrl: result.downloadUrl,
+        outputName,
+        status: "downloaded",
+      });
     }
 
     onLog(`[PixVerse] ${chunks.length} 段已完成，正在拼接成完整画面...`);

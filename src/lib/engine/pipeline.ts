@@ -11,7 +11,9 @@ import {
 } from "./ffmpeg";
 import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
+import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { CosService } from "../cos";
+import { lipsyncModeName, lipsyncModelName, resolveLipsyncProvider } from "../lipsync-provider";
 
 export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
   const task = TaskStore.get(taskId);
@@ -122,9 +124,11 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       "success"
     );
 
-    // 4. Step: Lip-sync submission (HeyGen MCP or PixVerse / OpenLux)
-    const lipsyncProvider =
-      task.inputs.lipsyncProvider || config.lipsyncProvider || "heygen";
+    // 4. Step: Lip-sync submission (HeyGen / PixVerse / VEED)
+    const lipsyncProvider = resolveLipsyncProvider(
+      task.inputs.lipsyncProvider || config.lipsyncProvider,
+      "heygen"
+    );
 
     currentStep = "mcp_preflight";
     TaskStore.update(taskId, {
@@ -188,6 +192,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
           audioPath: ttsResult.finalWavPath,
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
+          existingChunks: TaskStore.get(taskId)?.results.lipsyncChunks,
           onLog: (m) => log(m),
           onJobCreated: ({ lipsyncId, creditsUsed }) => {
             TaskStore.update(taskId, {
@@ -205,6 +210,57 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
                 lipsyncProvider: "pixverse",
                 lipsyncCredits: creditsUsed,
                 pixverseResultUrl: downloadUrl,
+              },
+            });
+          },
+          onChunkProgress: (chunk) => {
+            const current = TaskStore.get(taskId);
+            const chunks = [...(current?.results.lipsyncChunks || [])];
+            const index = chunks.findIndex((item) => item.index === chunk.index);
+            if (index >= 0) chunks[index] = { ...chunks[index], ...chunk };
+            else chunks.push(chunk);
+            chunks.sort((a, b) => a.index - b.index);
+            TaskStore.update(taskId, { results: { lipsyncChunks: chunks } });
+          },
+        },
+        jobDir
+      );
+    } else if (lipsyncProvider === "veed") {
+      log("🛡️ 第三步: 校验 VEED 对口型素材...");
+      if (!fs.existsSync(preparedVideoPath) || !fs.existsSync(ttsResult.finalWavPath)) {
+        throw new Error("预处理视频或原声音轨不存在，无法提交 VEED 对口型");
+      }
+      log("素材校验通过，准备提交至 fal.ai / VEED Lipsync", "success");
+
+      currentStep = "mcp_lipsync_submit";
+      TaskStore.update(taskId, {
+        step: "mcp_lipsync_submit",
+        progress: 65,
+      });
+      log("🔌 第四步: 正在调度 VEED Lipsync (fal.ai) 对口型...");
+
+      heygenResult = await FalVeedLipsyncAdapter.execute(
+        {
+          videoPath: preparedVideoPath,
+          audioPath: ttsResult.finalWavPath,
+          videoUrl: publicVideoUrl,
+          audioUrl: publicAudioUrl,
+          objectKeyPrefix: `jobs/${taskId}`,
+          onLog: (m) => log(m),
+          onJobCreated: ({ lipsyncId }) => {
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "veed",
+              },
+            });
+          },
+          onResultReady: ({ lipsyncId, downloadUrl }) => {
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "veed",
+                veedResultUrl: downloadUrl,
               },
             });
           },
@@ -278,13 +334,13 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
         provider: lipsyncProvider,
         lipsync_id: heygenResult.lipsyncId,
         submission_title: submissionTitle,
-        model: lipsyncProvider === "pixverse" ? "pixverse-lipsync" : "heygen-precision",
+        model: lipsyncModelName(lipsyncProvider),
         credits: heygenResult.creditsUsed,
       },
       heygen: {
         lipsync_id: heygenResult.lipsyncId,
         submission_title: submissionTitle,
-        mode: lipsyncProvider === "pixverse" ? "pixverse-lipsync" : "precision",
+        mode: lipsyncModeName(lipsyncProvider),
       },
     };
 
