@@ -19,6 +19,7 @@ import {
   calculateCostCny,
   settleMainAppCredits,
   releaseMainAppCredits,
+  POINTS_PER_SECOND,
 } from "../main-app-billing";
 
 export async function runDigitalHumanPipeline(
@@ -49,7 +50,7 @@ export async function runDigitalHumanPipeline(
 
     if (task.billing?.isExternalUser) {
       log(
-        `💳 外部用户计费：费率 200积分/秒 (0.20元/秒)，已预留 ${task.billing.estimatedPoints} 积分 (预估 ${task.billing.estimatedDuration}s)`,
+        `💳 外部用户计费：费率 ${POINTS_PER_SECOND}积分/秒 (0.20元/秒)，已预留 ${task.billing.estimatedPoints} 积分 (预估 ${task.billing.estimatedDuration}s)`,
         "info"
       );
     } else {
@@ -405,7 +406,7 @@ export async function runDigitalHumanPipeline(
       chargedPoints = calculateRequiredPoints(actualDuration);
       costCny = calculateCostCny(actualDuration);
       log(
-        `💳 正在结算主站积分消耗: 实际时长 ${actualDuration.toFixed(1)}s × 200积分/秒 = ${chargedPoints} 积分 (¥${costCny})...`,
+        `💳 正在结算主站积分消耗: 实际时长 ${actualDuration.toFixed(1)}s × ${POINTS_PER_SECOND}积分/秒 = ${chargedPoints} 积分 (¥${costCny})...`,
         "info"
       );
       try {

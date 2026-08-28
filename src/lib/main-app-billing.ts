@@ -7,9 +7,9 @@ import {
   type MainAppUser,
 } from "./main-app-sso";
 
-export const POINTS_PER_SECOND = 200;
+export const POINTS_PER_SECOND = 20;
 export const CNY_PER_SECOND = 0.2;
-export const POINTS_PER_CNY = 1000;
+export const POINTS_PER_CNY = 100;
 export const CHARACTERS_PER_SECOND = 4.4;
 
 export class MainAppBillingError extends Error {
@@ -29,7 +29,7 @@ export class MainAppBillingError extends Error {
 }
 
 /**
- * 判断用户是否为需要按 200 积分/秒计费的主站外部注册用户
+ * 判断用户是否为需要按 20 积分/秒计费的主站外部注册用户
  */
 export function isExternallyBilledUser(
   user?: Partial<MainAppUser> | null,
@@ -54,7 +54,7 @@ export function isExternallyBilledUser(
 }
 
 /**
- * 根据视频/音频时长计算所需积分（200 积分/秒，向上取整）
+ * 根据视频/音频时长计算所需积分（20 积分/秒 = 0.20 元/秒，向上取整）
  */
 export function calculateRequiredPoints(durationSeconds: number): number {
   const seconds = Math.max(0, Number(durationSeconds) || 0);

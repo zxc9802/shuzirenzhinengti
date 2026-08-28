@@ -358,7 +358,7 @@ export default function StudioPage() {
             {/* Dynamic Duration & Points Estimation */}
             {scriptText.trim().length > 0 && (() => {
               const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
-              const estPoints = Math.ceil(estDuration * 200);
+              const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
               const estCny = (estDuration * 0.2).toFixed(2);
               const isExternal =
                 userSession?.billing?.isExternal ??
@@ -390,7 +390,7 @@ export default function StudioPage() {
                             预计消耗: {estPoints.toLocaleString()} 积分
                           </span>
                           <span className="text-[10px] text-zinc-400">
-                            (¥{estCny} · 200分/秒)
+                            (¥{estCny} · {userSession?.billing?.ratePerSecond ?? 20}分/秒)
                           </span>
                         </div>
                       ) : (
@@ -596,7 +596,7 @@ export default function StudioPage() {
           {/* Action Trigger */}
           {(() => {
             const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
-            const estPoints = Math.ceil(estDuration * 200);
+            const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
             const isExternal =
               userSession?.billing?.isExternal ??
               (userSession?.user?.role !== "admin" &&

@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (relativePath) =>
   readFile(new URL(`../${relativePath}`, import.meta.url), "utf8");
 
-test("main-app-billing.ts strictly enforces 200 points/second and 0.20 CNY/second rate", async () => {
+test("main-app-billing.ts strictly enforces 20 points/second and 0.20 CNY/second rate", async () => {
   const [billing, pipeline, tasksRoute, ssoSession, navbar, page, history, taskStore] =
     await Promise.all([
       read("src/lib/main-app-billing.ts"),
@@ -18,10 +18,10 @@ test("main-app-billing.ts strictly enforces 200 points/second and 0.20 CNY/secon
       read("src/lib/store/task-store.ts"),
     ]);
 
-  // 1. Core billing rate definition
-  assert.match(billing, /export const POINTS_PER_SECOND = 200/);
+  // 1. Core billing rate definition (100 积分 = 1 元，与主站口径一致)
+  assert.match(billing, /export const POINTS_PER_SECOND = 20/);
   assert.match(billing, /export const CNY_PER_SECOND = 0\.2/);
-  assert.match(billing, /export const POINTS_PER_CNY = 1000/);
+  assert.match(billing, /export const POINTS_PER_CNY = 100/);
 
   // 2. Logic implementations
   assert.match(billing, /function isExternallyBilledUser/);
@@ -42,7 +42,7 @@ test("main-app-billing.ts strictly enforces 200 points/second and 0.20 CNY/secon
   assert.match(pipeline, /calculateRequiredPoints/);
   assert.match(pipeline, /settleMainAppCredits/);
   assert.match(pipeline, /releaseMainAppCredits/);
-  assert.match(pipeline, /200积分\/秒/);
+  assert.match(pipeline, /POINTS_PER_SECOND}积分\/秒/);
 
   // 5. SSO session metadata
   assert.match(ssoSession, /ratePerSecond: POINTS_PER_SECOND/);
@@ -54,14 +54,16 @@ test("main-app-billing.ts strictly enforces 200 points/second and 0.20 CNY/secon
   assert.match(taskStore, /chargedPoints\?: number/);
   assert.match(taskStore, /costCny\?: number/);
 
-  // 7. Frontend UI points and rate indicators
-  assert.match(navbar, /200分\/秒|200积分\/秒/);
-  assert.match(page, /200分\/秒|200积分\/秒/);
+  // 7. Frontend UI points and rate indicators (费率必须来自服务端 ratePerSecond，兜底 20)
+  assert.match(navbar, /ratePerSecond \?\? 20}积分\/秒/);
+  assert.match(navbar, /ratePerSecond \?\? 20}分\/秒/);
+  assert.match(page, /ratePerSecond \?\? 20}分\/秒/);
+  assert.match(page, /ratePerSecond \?\? 20\)/);
   assert.match(history, /已扣.*积分/);
 });
 
-test("points and CNY mathematical calculation rules (200 pts/s = 0.20 CNY/s)", () => {
-  const POINTS_PER_SECOND = 200;
+test("points and CNY mathematical calculation rules (20 pts/s = 0.20 CNY/s)", () => {
+  const POINTS_PER_SECOND = 20;
   const CNY_PER_SECOND = 0.2;
 
   function calculateRequiredPoints(durationSeconds) {
@@ -91,13 +93,13 @@ test("points and CNY mathematical calculation rules (200 pts/s = 0.20 CNY/s)", (
   }
 
   // Exact point calculations
-  assert.equal(calculateRequiredPoints(1), 200); // 1s = 200 pts
-  assert.equal(calculateRequiredPoints(5), 1000); // 5s = 1000 pts
-  assert.equal(calculateRequiredPoints(10), 2000); // 10s = 2000 pts
-  assert.equal(calculateRequiredPoints(15), 3000); // 15s = 3000 pts
-  assert.equal(calculateRequiredPoints(30), 6000); // 30s = 6000 pts
-  assert.equal(calculateRequiredPoints(12.3), 2460); // 12.3s * 200 = 2460 pts
-  assert.equal(calculateRequiredPoints(0.1), 20); // 0.1s * 200 = 20 pts
+  assert.equal(calculateRequiredPoints(1), 20); // 1s = 20 pts
+  assert.equal(calculateRequiredPoints(5), 100); // 5s = 100 pts
+  assert.equal(calculateRequiredPoints(10), 200); // 10s = 200 pts
+  assert.equal(calculateRequiredPoints(15), 300); // 15s = 300 pts
+  assert.equal(calculateRequiredPoints(30), 600); // 30s = 600 pts
+  assert.equal(calculateRequiredPoints(12.3), 246); // 12.3s * 20 = 246 pts
+  assert.equal(calculateRequiredPoints(0.1), 2); // 0.1s * 20 = 2 pts
   assert.equal(calculateRequiredPoints(0), 0);
   assert.equal(calculateRequiredPoints(-5), 0);
 
