@@ -21,7 +21,7 @@ export async function uploadFileDirectToCos(
     if (presignResp.ok) {
       const presignData = await presignResp.json();
       if (presignData.success && presignData.presignedUrl) {
-        // 2. Direct PUT to Tencent Cloud Singapore COS (Bypasses server proxy & 413 limits)
+        // 2. Direct PUT to cloud object storage (Bypasses server proxy & 413 limits)
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open("PUT", presignData.presignedUrl, true);
@@ -38,11 +38,11 @@ export async function uploadFileDirectToCos(
             if (xhr.status >= 200 && xhr.status < 300) {
               resolve();
             } else {
-              reject(new Error(`腾讯云 COS 直传失败 (${xhr.status})`));
+              reject(new Error(`云端存储直传失败 (${xhr.status})`));
             }
           };
 
-          xhr.onerror = () => reject(new Error("网络连接异常，无法连接至腾讯云 COS"));
+          xhr.onerror = () => reject(new Error("网络连接异常，无法连接至云端存储"));
           xhr.send(file);
         });
 

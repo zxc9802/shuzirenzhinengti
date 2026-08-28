@@ -103,7 +103,7 @@ export default function VoicesPage() {
       if (inputMode === "file") {
         if (!audioFile) throw new Error("请上传音频文件 (MP3/WAV) 或视频文件 (MP4/MOV)");
 
-        // 1. Direct upload file to Tencent Cloud COS
+        // 1. Direct upload file to cloud object storage
         const uploadResult = await uploadFileDirectToCos(
           audioFile,
           audioFile.name,
@@ -186,7 +186,7 @@ export default function VoicesPage() {
             <span>发音人声音库 (Voice Library)</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            支持拖拽上传录音或口播视频（系统自动提取高清人声），克隆专属发音人音色，并自动存入腾讯云 COS。
+            支持拖拽上传录音或口播视频（系统自动提取高清人声），克隆专属发音人音色，并自动存入云端存储。
           </p>
         </div>
 
@@ -253,7 +253,7 @@ export default function VoicesPage() {
             {dragOver ? "释放音频或视频文件即可添加声音" : "声音库暂无素材"}
           </h3>
           <p className="text-xs text-zinc-500 max-w-sm">
-            支持拖拽 MP3 / WAV 录音，或直接拖入 MP4 / MOV 视频文件，系统将自动抽离音频存入腾讯云 COS。
+            支持拖拽 MP3 / WAV 录音，或直接拖入 MP4 / MOV 视频文件，系统将自动抽离音频存入云端存储。
           </p>
           <button
             type="button"
@@ -360,7 +360,7 @@ export default function VoicesPage() {
                     上传录音或口播视频提取声音
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    支持拖拽文件，音频将自动抽离并存入腾讯云 COS
+                    支持拖拽文件，音频将自动抽离并存入云端存储
                   </p>
                 </div>
               </div>

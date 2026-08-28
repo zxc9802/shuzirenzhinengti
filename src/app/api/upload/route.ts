@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If Tencent Cloud COS is configured, upload video & thumbnail to COS with public-read permissions
+    // If cloud object storage is configured, upload video & thumbnail to COS with public-read permissions
     if (CosService.isConfigured()) {
       try {
         CosService.ensureBucketPublicAndCors().catch(() => {});
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
           coverUrl = thumbCosUrl;
         }
       } catch (cosErr: any) {
-        console.warn("Tencent COS upload fallback to local:", cosErr.message);
+        console.warn("cloud object storage upload fallback to local:", cosErr.message);
       }
     }
 

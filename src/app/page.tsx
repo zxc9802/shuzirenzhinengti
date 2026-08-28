@@ -41,15 +41,24 @@ export default function StudioPage() {
   const [videoFit, setVideoFit] = useState<"smart" | "preserve">("smart");
   const [emotionIntensity, setEmotionIntensity] = useState(0.8);
   const [selectedVoice, setSelectedVoice] = useState<VoiceItem | null>(null);
-  const [lipsyncProvider, setLipsyncProvider] = useState<LipsyncProvider>("pixverse");
+  const [lipsyncProvider, setLipsyncProvider] = useState<LipsyncProvider>("veed");
 
   const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
   const [loading, setLoading] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userSession, setUserSession] = useState<{ user?: any; billing?: any } | null>(null);
 
   // 1. Initial restore on mount
   useEffect(() => {
+    // Fetch SSO Session info
+    fetch(`/api/sso/session?t=${Date.now()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.data) setUserSession(d.data);
+      })
+      .catch(() => {});
+
     // 1.1 Fast immediate restore from local storage cache
     const cachedTaskStr = localStorage.getItem("cached_active_task");
     if (cachedTaskStr) {
@@ -345,6 +354,70 @@ export default function StudioPage() {
               placeholder="请输入需要进行语音合成与口型匹配的完整中文文案... (例如：大家好，今天给大家分享一款超好用的 AI 数字人智能工具)"
               className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3.5 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all disabled:opacity-50 font-normal leading-relaxed"
             />
+
+            {/* Dynamic Duration & Points Estimation */}
+            {scriptText.trim().length > 0 && (() => {
+              const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
+              const estPoints = Math.ceil(estDuration * 200);
+              const estCny = (estDuration * 0.2).toFixed(2);
+              const isExternal =
+                userSession?.billing?.isExternal ??
+                (userSession?.user?.role !== "admin" &&
+                  userSession?.user?.billingAudience !== "internal");
+              const userBalance = userSession?.user?.pointsBalance;
+              const isInsufficient =
+                isExternal &&
+                typeof userBalance === "number" &&
+                userBalance < estPoints;
+
+              return (
+                <div className="mt-2.5 space-y-2">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/30 border border-white/[0.06] text-xs">
+                    <div className="flex items-center gap-1.5 text-zinc-300">
+                      <span className="text-zinc-400">预计生成时长:</span>
+                      <span className="font-mono font-bold text-zinc-200">
+                        ~{estDuration} 秒
+                      </span>
+                    </div>
+                    <div>
+                      {isExternal ? (
+                        <div className="flex items-center gap-1.5 font-mono">
+                          <span
+                            className={`font-bold ${
+                              isInsufficient ? "text-rose-400" : "text-amber-300"
+                            }`}
+                          >
+                            预计消耗: {estPoints.toLocaleString()} 积分
+                          </span>
+                          <span className="text-[10px] text-zinc-400">
+                            (¥{estCny} · 200分/秒)
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-emerald-400 font-semibold text-[11px]">
+                          内部账号 · 免积分
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {isInsufficient && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                      <span>
+                        当前账户积分余额 (
+                        {typeof userBalance === "number"
+                          ? userBalance.toLocaleString()
+                          : 0}{" "}
+                        积分) 不足，本次需要 {estPoints.toLocaleString()}{" "}
+                        积分，请先前往主站充值。
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {scriptText.trim().length >= 400 && (
               <p className="mt-2 text-[11px] leading-relaxed text-amber-300/90">
                 文案约 {scriptText.trim().length} 字，口播大概 {Math.max(1, Math.round(scriptText.trim().length / 4.4 / 60))} 分钟。超过 90 秒会自动分段对口型再拼接，不会因为单次轮询超时整段失败。
@@ -386,7 +459,12 @@ export default function StudioPage() {
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}
               >
-                <div className="text-xs font-bold text-zinc-100">VEED Lipsync</div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-bold text-zinc-100">VEED Lipsync</span>
+                  <span className="rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold text-blue-300 border border-blue-400/30">
+                    （默认，推荐）
+                  </span>
+                </div>
                 <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
                   fal.ai 队列接口 `veed/lipsync`，用公网视频和音频直链对口型
                 </div>
@@ -516,19 +594,32 @@ export default function StudioPage() {
           )}
 
           {/* Action Trigger */}
-          <button
-            onClick={handleStartPipeline}
-            disabled={loading || isRunning || !videoData || !scriptText.trim()}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-blue-600 hover:bg-blue-500 p-4 text-sm font-bold text-white shadow-lg shadow-blue-600/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-[0.99] border border-blue-400/30"
-          >
-            <Play className="h-4 w-4 fill-white" />
-            <span>
-              {isRunning
-                ? "流水线正在运行中..."
-                : "开始执行数字人对口型流水线"}
-            </span>
-            <ArrowRight className="h-4 w-4 text-blue-200 opacity-80 ml-1" />
-          </button>
+          {(() => {
+            const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
+            const estPoints = Math.ceil(estDuration * 200);
+            const isExternal =
+              userSession?.billing?.isExternal ??
+              (userSession?.user?.role !== "admin" &&
+                userSession?.user?.billingAudience !== "internal");
+
+            return (
+              <button
+                onClick={handleStartPipeline}
+                disabled={loading || isRunning || !videoData || !scriptText.trim()}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-blue-600 hover:bg-blue-500 p-4 text-sm font-bold text-white shadow-lg shadow-blue-600/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-[0.99] border border-blue-400/30"
+              >
+                <Play className="h-4 w-4 fill-white" />
+                <span>
+                  {isRunning
+                    ? "流水线正在运行中..."
+                    : isExternal && scriptText.trim()
+                    ? `开始执行数字人对口型流水线 (预估 ${estPoints.toLocaleString()} 积分)`
+                    : "开始执行数字人对口型流水线"}
+                </span>
+                <ArrowRight className="h-4 w-4 text-blue-200 opacity-80 ml-1" />
+              </button>
+            );
+          })()}
         </div>
 
         {/* Right Column: Pipeline, Logs & Results */}

@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
 
     if (!CosService.isConfigured()) {
       return NextResponse.json(
-        { success: false, error: "腾讯云 COS 未配置" },
+        { success: false, error: "云端存储未配置" },
         { status: 400 }
       );
     }

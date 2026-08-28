@@ -65,7 +65,7 @@ function persistStore() {
       fs.writeFileSync(BACKUP_VOICES_PATH, content, "utf-8");
     } catch {}
 
-    // Mirror to Tencent Cloud COS
+    // Mirror to cloud object storage
     if (CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_VOICES_KEY, memoryVoices).catch((err) => {
         console.warn("VoiceStore COS sync error:", err.message);

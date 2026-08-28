@@ -125,8 +125,8 @@ export default function McpPage() {
       setToolArgs(
         JSON.stringify(
           {
-            video_url: "https://shuziren-1410143389.cos.ap-singapore.myqcloud.com/uploads/videos/sample.mp4",
-            audio_url: "https://shuziren-1410143389.cos.ap-singapore.myqcloud.com/jobs/sample.wav",
+            video_url: "https://cdn.example.com/uploads/videos/sample.mp4",
+            audio_url: "https://cdn.example.com/jobs/sample.wav",
             title: "lipsync_sample_task",
             mode: "precision",
           },

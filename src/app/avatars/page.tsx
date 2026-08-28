@@ -155,7 +155,7 @@ function AvatarCardItem({
         <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
           {avatar.isCos ? (
             <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
-              <Cloud className="h-3 w-3" /> 腾讯云 COS
+              <Cloud className="h-3 w-3" /> 云端存储
             </span>
           ) : (
             <span className="flex items-center gap-1 rounded-md bg-zinc-800/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-mono text-zinc-300">
@@ -354,7 +354,7 @@ export default function AvatarsPage() {
     setUploadError(null);
 
     try {
-      // 1. Direct upload video to Tencent Cloud COS (bypasses server 413 limit)
+      // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
       const videoResult = await uploadFileDirectToCos(
         uploadFile,
         uploadFile.name,
@@ -468,7 +468,7 @@ export default function AvatarsPage() {
             <span>口播形象库 (Avatar Library)</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            支持拖拽上传或选择口播真人视频。制作数字人时，可一键选用此处的任意形象进行对口型渲染，自动存入腾讯云 COS 高速分发。
+            支持拖拽上传或选择口播真人视频。制作数字人时，可一键选用此处的任意形象进行对口型渲染，自动存入云端高速分发。
           </p>
         </div>
 
@@ -535,7 +535,7 @@ export default function AvatarsPage() {
             {dragOver ? "释放视频文件即可添加至形象库" : "形象库暂无素材"}
           </h3>
           <p className="text-xs text-zinc-500 max-w-sm">
-            支持拖拽 MP4 / MOV 视频文件至此处，自动存入腾讯云 COS 新加坡存储桶。
+            支持拖拽 MP4 / MOV 视频文件至此处，自动存入云端新加坡存储桶。
           </p>
           <button
             type="button"
@@ -580,7 +580,7 @@ export default function AvatarsPage() {
                     上传新口播形象视频
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    支持拖拽文件，自动提取首秒清晰封面并存入腾讯云 COS
+                    支持拖拽文件，自动提取首秒清晰封面并存入云端存储
                   </p>
                 </div>
               </div>
@@ -684,7 +684,7 @@ export default function AvatarsPage() {
               {uploading && (
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs text-zinc-300 font-medium">
-                    <span>正在上传并同步至腾讯云 COS...</span>
+                    <span>正在上传并同步至云端存储...</span>
                     <span className="font-mono text-blue-400">{uploadProgress}%</span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-900">

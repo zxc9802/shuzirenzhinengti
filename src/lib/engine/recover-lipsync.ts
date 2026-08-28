@@ -8,6 +8,7 @@ import { downloadFileToDisk } from "./download-file";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { downloadPixverseResult } from "./pixverse-ingest";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
+import { calculateRequiredPoints, calculateCostCny } from "../main-app-billing";
 
 const LIPSYNC_JOB_RE = /任务已建立 \(ID:\s*([^，)\s]+)\)/;
 
@@ -42,14 +43,43 @@ export function isRecoverableLipsyncTask(task: TaskItem): boolean {
   );
 }
 
-async function markCompleted(taskId: string, results: TaskItem["results"], message: string): Promise<TaskItem> {
+async function markCompleted(
+  taskId: string,
+  results: TaskItem["results"],
+  message: string
+): Promise<TaskItem> {
   TaskStore.addLog(taskId, message, "success");
+  const task = TaskStore.get(taskId);
+  const duration = results.videoDuration || 0;
+  const chargedPoints =
+    results.chargedPoints ??
+    (task?.billing?.isExternalUser
+      ? calculateRequiredPoints(duration)
+      : undefined);
+  const costCny =
+    results.costCny ??
+    (task?.billing?.isExternalUser ? calculateCostCny(duration) : undefined);
+
   const updated = TaskStore.update(taskId, {
     status: "completed",
     step: "done",
     progress: 100,
     error: undefined,
-    results,
+    billing: task?.billing
+      ? {
+          ...task.billing,
+          actualDuration: duration,
+          chargedPoints,
+          costCny,
+          status: "settled",
+        }
+      : undefined,
+    results: {
+      ...results,
+      chargedPoints,
+      costCny,
+      billingDuration: duration,
+    },
   });
   if (!updated) {
     throw new Error("任务不存在，无法写入恢复结果");

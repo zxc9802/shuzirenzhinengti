@@ -11,6 +11,10 @@ export type MainAppUser = {
   nickname: string;
   role: string;
   groupName?: string;
+  billingAudience?: string;
+  pointsBalance?: number;
+  avatar?: string;
+  createdAt?: string;
 };
 
 export type MainAppSession = {
@@ -267,4 +271,20 @@ async function sessionValidationCacheKey(token: string): Promise<string> {
     new TextEncoder().encode(token),
   );
   return base64UrlEncode(new Uint8Array(digest));
+}
+
+export async function fetchMainAppUserProfile(
+  token: string,
+): Promise<Partial<MainAppUser> | null> {
+  try {
+    const response = await fetch(`${getMainAppUrl()}/api/sso/session`, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return (payload?.data?.user as Partial<MainAppUser>) || null;
+  } catch {
+    return null;
+  }
 }

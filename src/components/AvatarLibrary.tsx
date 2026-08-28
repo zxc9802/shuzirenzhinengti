@@ -105,7 +105,7 @@ export default function AvatarLibrary({
           <Users className="h-8 w-8 text-zinc-500 mb-2" />
           <p className="text-xs font-semibold text-zinc-300">形象库暂无已保存素材</p>
           <p className="text-[11px] text-zinc-500 mt-1 max-w-xs">
-            您上传过的口播视频会自动归档到形象库并存入腾讯云 COS，可随时快速复用
+            您上传过的口播视频会自动归档到形象库并存入云端存储，可随时快速复用
           </p>
           <button
             type="button"

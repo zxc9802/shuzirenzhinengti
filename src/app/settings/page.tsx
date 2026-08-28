@@ -49,7 +49,7 @@ export default function SettingsPage() {
     falApiKey: "",
     falVeedModel: "veed/lipsync",
 
-    // Tencent Cloud COS
+    // cloud object storage
     cosSecretId: "",
     cosSecretKey: "",
     cosBucket: "",
@@ -287,11 +287,11 @@ export default function SettingsPage() {
           <span>系统参数与对象存储配置</span>
         </h1>
         <p className="mt-1.5 text-xs sm:text-sm text-zinc-400">
-          管理腾讯云 COS 对象存储、发音人声音库、HeyGen MCP 客户端与 302.AI 接口凭据。
+          管理云端对象存储、发音人声音库、HeyGen MCP 客户端与 302.AI 接口凭据。
         </p>
       </div>
 
-      {/* Section 0: Tencent Cloud COS Storage Configuration */}
+      {/* Section 0: cloud object storage Storage Configuration */}
       <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-6 backdrop-blur-xl shadow-xl space-y-5">
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-3.5">
           <div className="flex items-center gap-2.5">
@@ -300,10 +300,10 @@ export default function SettingsPage() {
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
-                腾讯云对象存储 (Tencent Cloud COS) 配置
+                云端对象存储 (Object Storage) 配置
               </h2>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                口播形象视频与媒体素材将自动存入腾讯云 COS，实现公网高速分发与持久化
+                口播形象视频与媒体素材将自动存入云端存储，实现公网高速分发与持久化
               </p>
             </div>
           </div>
@@ -318,7 +318,7 @@ export default function SettingsPage() {
             ) : (
               <Zap className="h-3.5 w-3.5 text-blue-400" />
             )}
-            <span>{testingCos ? "正在校验密钥..." : "测试 COS 连接"}</span>
+            <span>{testingCos ? "正在校验密钥..." : "测试存储连接"}</span>
           </button>
         </div>
 
@@ -343,7 +343,7 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-zinc-300">
-              腾讯云 SecretId (COS_SECRET_ID)
+              SecretId (COS_SECRET_ID)
             </label>
             <input
               type="text"
@@ -356,7 +356,7 @@ export default function SettingsPage() {
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-zinc-300">
-              腾讯云 SecretKey (COS_SECRET_KEY)
+              SecretKey (COS_SECRET_KEY)
             </label>
             <input
               type="password"
@@ -395,7 +395,7 @@ export default function SettingsPage() {
 
           <div className="sm:col-span-2 space-y-1.5">
             <label className="text-xs font-medium text-zinc-300">
-              自定义 CDN 加速域名 (可选，留空则使用腾讯云默认 COS 域名)
+              自定义 CDN 加速域名 (可选，留空则使用默认对象存储域名)
             </label>
             <input
               type="text"
@@ -805,7 +805,7 @@ export default function SettingsPage() {
                     : "border-white/[0.06] bg-black/30 text-zinc-400"
                 }`}
               >
-                VEED
+                VEED (默认，推荐)
               </button>
               <button
                 type="button"
@@ -828,11 +828,11 @@ export default function SettingsPage() {
                 type="text"
                 value={config.pixverseIngestUrl || ""}
                 onChange={(e) => setConfig({ ...config, pixverseIngestUrl: e.target.value })}
-                placeholder="https://xxxxx.preview.tencentscf.com"
+                placeholder="https://xxxxx.example.com"
                 className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
               />
               <p className="text-[11px] leading-relaxed text-zinc-500">
-                新加坡服务器先让广州函数去拉 PixVerse，再从新加坡 COS 取片。不填则仍直连。
+                新加坡服务器先让广州函数去拉 PixVerse，再从新加坡云端存储取片。不填则仍直连。
               </p>
             </div>
             <div className="space-y-1.5 sm:col-span-2">

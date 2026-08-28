@@ -14,8 +14,17 @@ import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { CosService } from "../cos";
 import { lipsyncModeName, lipsyncModelName, resolveLipsyncProvider } from "../lipsync-provider";
+import {
+  calculateRequiredPoints,
+  calculateCostCny,
+  settleMainAppCredits,
+  releaseMainAppCredits,
+} from "../main-app-billing";
 
-export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
+export async function runDigitalHumanPipeline(
+  taskId: string,
+  sessionToken?: string,
+): Promise<void> {
   const task = TaskStore.get(taskId);
   if (!task) return;
 
@@ -37,6 +46,15 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       progress: 10,
     });
     log("🚀 启动数字人对口型流水线...");
+
+    if (task.billing?.isExternalUser) {
+      log(
+        `💳 外部用户计费：费率 200积分/秒 (0.20元/秒)，已预留 ${task.billing.estimatedPoints} 积分 (预估 ${task.billing.estimatedDuration}s)`,
+        "info"
+      );
+    } else {
+      log("🎟️ 内部/管理员账号，免除积分消耗", "info");
+    }
 
     // 0. Ensure source video exists locally (auto-download from videoUrl / COS if missing from local disk)
     let localVideoPath = task.inputs.videoPath;
@@ -147,10 +165,10 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
     let publicVideoUrl = `${baseUrl}/jobs/${taskId}/heygen-source-video.mp4`;
     let publicAudioUrl = `${baseUrl}/jobs/${taskId}/exact-final-indextts.wav`;
 
-    // If Tencent Cloud COS is configured, upload prepared video & audio to COS for 100% reachable public access
+    // If cloud object storage is configured, upload prepared video & audio to COS for 100% reachable public access
     if (CosService.isConfigured()) {
       try {
-        log("☁️ 正在将预处理音画直链同步至腾讯云 COS 高速分发...", "info");
+        log("☁️ 正在将预处理音画直链同步至云端高速分发...", "info");
         publicVideoUrl = await CosService.uploadFile(
           preparedVideoPath,
           `jobs/${taskId}/heygen-source-video.mp4`
@@ -159,7 +177,7 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
           ttsResult.finalWavPath,
           `jobs/${taskId}/exact-final-indextts.wav`
         );
-        log("✅ 预处理音视频直链已就绪 (腾讯云 COS)", "success");
+        log("✅ 预处理音视频直链已就绪 (云端存储)", "success");
       } catch (cosErr: any) {
         console.warn("COS sync for inputs failed, fallback to baseUrl:", cosErr.message);
       }
@@ -351,17 +369,17 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       "utf-8"
     );
 
-    // Upload final video, audio, evidence to Tencent Cloud COS if configured
+    // Upload final video, audio, evidence to cloud object storage if configured
     let finalVideoUrl = `/jobs/${taskId}/final.mp4`;
     let exactAudioUrl = `/jobs/${taskId}/exact-final-indextts.wav`;
     let evidenceJsonUrl = `/jobs/${taskId}/evidence.json`;
 
     if (CosService.isConfigured()) {
       try {
-        log("☁️ 正在将合成的数字人成片上传至腾讯云 COS 永久存储...", "info");
+        log("☁️ 正在将合成的数字人成片上传至云端永久存储...", "info");
         const cosVideoKey = `jobs/${taskId}/final.mp4`;
         finalVideoUrl = await CosService.uploadFile(finalVideoPath, cosVideoKey);
-        log(`✅ 成片已成功存储至腾讯云 COS: ${finalVideoUrl}`, "success");
+        log(`✅ 成片已成功存储至云端存储: ${finalVideoUrl}`, "success");
 
         const cosAudioKey = `jobs/${taskId}/exact-final-indextts.wav`;
         exactAudioUrl = await CosService.uploadFile(ttsResult.finalWavPath, cosAudioKey);
@@ -369,7 +387,44 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
         const cosEvidenceKey = `jobs/${taskId}/evidence.json`;
         evidenceJsonUrl = await CosService.uploadFile(evidencePath, cosEvidenceKey);
       } catch (cosErr: any) {
-        log(`⚠️ 腾讯云 COS 上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
+        log(`⚠️ 云端存储上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
+      }
+    }
+
+    // 7. Settle main-site billing credits for external users (200 points/sec = 0.20 CNY/sec)
+    let chargedPoints: number | undefined;
+    let costCny: number | undefined;
+    let pointsBalanceAfter: number | undefined;
+
+    const currentTaskData = TaskStore.get(taskId) || task;
+    if (
+      currentTaskData.billing?.isExternalUser &&
+      currentTaskData.billing.requestId
+    ) {
+      const actualDuration = finalProbe.durationSeconds;
+      chargedPoints = calculateRequiredPoints(actualDuration);
+      costCny = calculateCostCny(actualDuration);
+      log(
+        `💳 正在结算主站积分消耗: 实际时长 ${actualDuration.toFixed(1)}s × 200积分/秒 = ${chargedPoints} 积分 (¥${costCny})...`,
+        "info"
+      );
+      try {
+        const settleResult = await settleMainAppCredits({
+          userId: currentTaskData.userId || "",
+          requestId: currentTaskData.billing.requestId,
+          actualDuration,
+          chargedPoints,
+          sessionToken,
+        });
+        pointsBalanceAfter = settleResult.pointsBalance;
+        log(
+          `✅ 主站积分结算成功：扣除 ${chargedPoints} 积分 (¥${costCny})，当前账户剩余: ${
+            pointsBalanceAfter !== undefined ? `${pointsBalanceAfter} 积分` : "正常"
+          }`,
+          "success"
+        );
+      } catch (settleErr: any) {
+        log(`⚠️ 积分结算通知警告: ${settleErr.message}`, "warn");
       }
     }
 
@@ -379,14 +434,29 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
       status: "completed",
       step: "done",
       progress: 100,
+      billing: currentTaskData.billing
+        ? {
+            ...currentTaskData.billing,
+            actualDuration: finalProbe.durationSeconds,
+            chargedPoints,
+            costCny,
+            pointsBalanceAfter,
+            status: "settled",
+          }
+        : undefined,
       results: {
-        originalVideoUrl: task.inputs.videoUrl || `/jobs/${taskId}/${path.basename(task.inputs.videoPath)}`,
+        originalVideoUrl:
+          task.inputs.videoUrl ||
+          `/jobs/${taskId}/${path.basename(task.inputs.videoPath)}`,
         finalVideoUrl,
         exactAudioUrl,
         evidenceJsonUrl,
         heygenLipsyncId: heygenResult.lipsyncId,
         lipsyncProvider,
         lipsyncCredits: heygenResult.creditsUsed,
+        chargedPoints,
+        costCny,
+        billingDuration: finalProbe.durationSeconds,
         videoDuration: finalProbe.durationSeconds,
         audioDuration: ttsResult.selectedDuration,
         resolution: `${finalProbe.width}x${finalProbe.height}`,
@@ -400,6 +470,32 @@ export async function runDigitalHumanPipeline(taskId: string): Promise<void> {
   } catch (err: any) {
     const errorMsg = err.message || "未知流水线异常";
     log(`❌ 流程发生错误: ${errorMsg}`, "error");
+
+    // Release reserved billing credits on failure
+    const currentTaskData = TaskStore.get(taskId) || task;
+    if (
+      currentTaskData.billing?.isExternalUser &&
+      currentTaskData.billing.requestId &&
+      currentTaskData.billing.status === "reserved"
+    ) {
+      try {
+        await releaseMainAppCredits({
+          userId: currentTaskData.userId || "",
+          requestId: currentTaskData.billing.requestId,
+          sessionToken,
+        });
+        TaskStore.update(taskId, {
+          billing: {
+            ...currentTaskData.billing,
+            status: "released",
+          },
+        });
+        log("↩️ 流水线异常中断，预留积分已全额解冻返还", "info");
+      } catch (releaseErr: any) {
+        console.warn("Failed to release points on error:", releaseErr);
+      }
+    }
+
     TaskStore.update(taskId, {
       status: "failed",
       step: "error",

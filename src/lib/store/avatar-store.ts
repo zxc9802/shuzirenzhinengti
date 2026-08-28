@@ -57,7 +57,7 @@ function persistStore() {
       fs.writeFileSync(BACKUP_AVATARS_PATH, content, "utf-8");
     } catch {}
 
-    // Mirror to Tencent Cloud COS for 100% persistent cloud recovery
+    // Mirror to cloud object storage for 100% persistent cloud recovery
     if (CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_AVATARS_KEY, memoryAvatars).catch((err) => {
         console.warn("AvatarStore COS sync error:", err.message);
@@ -74,7 +74,7 @@ export const AvatarStore = {
   async getAllAsync(): Promise<AvatarItem[]> {
     reloadFromDisk();
 
-    // If local memory is empty or not yet synced with cloud, fetch from Tencent Cloud COS
+    // If local memory is empty or not yet synced with cloud, fetch from cloud object storage
     if ((memoryAvatars.length === 0 || !hasLoadedFromCloud) && CosService.isConfigured()) {
       try {
         const cloudAvatars = await CosService.getJsonFromCos<AvatarItem[]>(COS_AVATARS_KEY);

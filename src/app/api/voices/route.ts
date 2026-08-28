@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       let publicAudioUrl = `/uploads/voices/${finalMp3FileName}`;
       let isCos = false;
 
-      // 3. Upload extracted audio to Tencent Cloud COS
+      // 3. Upload extracted audio to cloud object storage
       if (CosService.isConfigured()) {
         try {
           const cosKey = `uploads/voices/${finalMp3FileName}`;

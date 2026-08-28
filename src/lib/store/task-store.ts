@@ -20,8 +20,30 @@ export interface LogEntry {
   message: string;
 }
 
+export interface TaskBillingInfo {
+  isExternalUser: boolean;
+  ratePerSecond: number;
+  costCnyPerSecond: number;
+  requestId?: string;
+  estimatedDuration?: number;
+  estimatedPoints?: number;
+  actualDuration?: number;
+  chargedPoints?: number;
+  costCny?: number;
+  pointsBalanceBefore?: number;
+  pointsBalanceAfter?: number;
+  status:
+    | "not_applicable"
+    | "reserved"
+    | "settled"
+    | "released"
+    | "insufficient_balance";
+}
+
 export interface TaskItem {
   id: string;
+  userId?: string;
+  userAccount?: string;
   createdAt: number;
   updatedAt: number;
   status: "pending" | "processing" | "completed" | "failed";
@@ -29,6 +51,7 @@ export interface TaskItem {
   failedStep?: TaskStep;
   progress: number;
   logs: LogEntry[];
+  billing?: TaskBillingInfo;
   inputs: {
     videoName: string;
     videoPath: string;
@@ -52,6 +75,9 @@ export interface TaskItem {
     lipsyncCredits?: number;
     pixverseResultUrl?: string;
     veedResultUrl?: string;
+    chargedPoints?: number;
+    costCny?: number;
+    billingDuration?: number;
     lipsyncChunks?: {
       index: number;
       lipsyncId?: string;
@@ -116,7 +142,7 @@ function persistStore() {
       fs.writeFileSync(BACKUP_STORE_PATH, content, "utf-8");
     } catch {}
 
-    // Mirror to Tencent Cloud COS for 100% persistent cloud recovery across container restarts
+    // Mirror to cloud object storage for 100% persistent cloud recovery across container restarts
     if (CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_TASKS_KEY, arr).catch((err) => {
         console.warn("TaskStore COS sync error:", err.message);
@@ -131,7 +157,7 @@ export const TaskStore = {
   async getAllAsync(): Promise<TaskItem[]> {
     reloadFromDisk();
 
-    // If local memory is empty or not yet synced with cloud, fetch from Tencent Cloud COS
+    // If local memory is empty or not yet synced with cloud, fetch from cloud object storage
     if ((memoryTasks.size === 0 || !hasLoadedFromCloud) && CosService.isConfigured()) {
       try {
         const cloudTasks = await CosService.getJsonFromCos<TaskItem[]>(COS_TASKS_KEY);

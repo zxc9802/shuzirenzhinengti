@@ -1,14 +1,52 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, History, Users, Mic } from "lucide-react";
+import { Video, History, Users, Mic, Coins, ShieldCheck, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import HeyGenConnectButton from "./HeyGenConnectButton";
 
+interface SessionData {
+  user: {
+    id: string;
+    account: string;
+    nickname: string;
+    role: string;
+    groupName?: string;
+    billingAudience?: string;
+    pointsBalance?: number;
+  };
+  billing?: {
+    ratePerSecond: number;
+    cnyPerSecond: number;
+    isExternal: boolean;
+  };
+}
+
 export default function Navbar() {
   const pathname = usePathname();
+  const [session, setSession] = useState<SessionData | null>(null);
+
+  const fetchSession = async () => {
+    try {
+      const resp = await fetch(`/api/sso/session?t=${Date.now()}`);
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.data) {
+          setSession(json.data);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    fetchSession();
+    const interval = setInterval(fetchSession, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   const navItems = [
     { name: "制作台", href: "/", icon: Video },
@@ -16,6 +54,9 @@ export default function Navbar() {
     { name: "声音库", href: "/voices", icon: Mic },
     { name: "任务历史", href: "/history", icon: History },
   ];
+
+  const isExternal = session?.billing?.isExternal ?? (session?.user?.role !== "admin" && session?.user?.billingAudience !== "internal");
+  const points = session?.user?.pointsBalance;
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-white/[0.08] bg-[#0a0b0e]/85 backdrop-blur-xl transition-all">
@@ -60,6 +101,40 @@ export default function Navbar() {
               );
             })}
           </nav>
+
+          {/* User & Points Badge */}
+          {session?.user && (
+            <div className="hidden md:flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-1.5 text-xs">
+              {isExternal ? (
+                <div
+                  className="flex items-center gap-1.5 font-medium text-amber-300"
+                  title="主站外部用户费率: 200积分/秒 (0.2元/秒)"
+                >
+                  <Coins className="h-3.5 w-3.5 text-amber-400" />
+                  <span className="font-mono font-bold">
+                    {typeof points === "number" ? points.toLocaleString() : "--"}
+                  </span>
+                  <span className="text-[10px] text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                    200分/秒
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 text-emerald-300 font-medium"
+                  title="内部/管理员账号免积分"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-[11px] text-emerald-400/90 font-medium">
+                    内部免扣费
+                  </span>
+                </div>
+              )}
+              <span className="text-zinc-500">|</span>
+              <span className="text-zinc-300 truncate max-w-[100px] text-[11px]" title={session.user.account}>
+                {session.user.nickname || session.user.account}
+              </span>
+            </div>
+          )}
 
           <HeyGenConnectButton variant="compact" />
         </div>

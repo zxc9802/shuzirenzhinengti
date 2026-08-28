@@ -111,7 +111,7 @@ export default function VoiceSelector({
           throw new Error("请上传 5~15 秒干净人声音频文件 (MP3/WAV/M4A/MP4)");
         }
 
-        // 1. Direct upload to Tencent Cloud COS
+        // 1. Direct upload to cloud object storage
         const uploadResult = await uploadFileDirectToCos(
           audioFile,
           audioFile.name,

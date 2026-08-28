@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { History, Film, Download, CheckCircle2, AlertCircle, Clock, Trash2, ArrowRight, Play } from "lucide-react";
+import { History, Film, Download, CheckCircle2, AlertCircle, Clock, Trash2, ArrowRight, Play, Coins } from "lucide-react";
 import { TaskItem } from "@/lib/store/task-store";
 import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
@@ -53,7 +53,7 @@ export default function HistoryPage() {
             <span>制作任务历史与交付归档</span>
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            查看所有已生成的数字人对口型成片、音轨校验与凭证哈希，数据已自动同步至腾讯云 COS 永久存储。
+            查看所有已生成的数字人对口型成片、音轨校验与凭证哈希，数据已自动同步至云端永久存储。
           </p>
         </div>
 
@@ -122,6 +122,21 @@ export default function HistoryPage() {
                         <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 border border-rose-500/25 px-2.5 py-0.5 text-[11px] font-semibold text-rose-300">
                           <AlertCircle className="h-3 w-3 text-rose-400" />
                           制作中断
+                        </span>
+                      )}
+                      {task.billing?.isExternalUser && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-amber-300">
+                          <Coins className="h-3 w-3 text-amber-400" />
+                          <span>
+                            {isDone && typeof (task.results?.chargedPoints ?? task.billing.chargedPoints) === "number"
+                              ? `已扣 ${(task.results?.chargedPoints ?? task.billing.chargedPoints ?? 0).toLocaleString()} 积分 (¥${(task.results?.costCny ?? task.billing.costCny ?? 0).toFixed(2)})`
+                              : `预留 ${(task.billing.estimatedPoints ?? 0).toLocaleString()} 积分`}
+                          </span>
+                        </span>
+                      )}
+                      {task.billing && !task.billing.isExternalUser && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 border border-blue-500/25 px-2.5 py-0.5 text-[11px] font-semibold text-blue-300">
+                          内部免扣费
                         </span>
                       )}
                       <span className="text-[11px] text-zinc-500 font-mono">

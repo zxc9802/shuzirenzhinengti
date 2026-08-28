@@ -92,7 +92,7 @@ export const CosService = {
     const cos = getCosClient();
 
     if (!cos || !config.cosBucket || !config.cosRegion) {
-      throw new Error("腾讯云 COS 未配置");
+      throw new Error("云端存储未配置");
     }
 
     const cleanKey = targetKey.replace(/^\/+/, "");
@@ -132,7 +132,7 @@ export const CosService = {
     const cos = getCosClient();
 
     if (!cos || !config.cosBucket || !config.cosRegion) {
-      throw new Error("腾讯云 COS 未配置，请先在系统设置中配置 SecretId / SecretKey / Bucket / Region");
+      throw new Error("云端存储未配置，请先在系统设置中配置 SecretId / SecretKey / Bucket / Region");
     }
 
     if (!fs.existsSync(localFilePath)) {
@@ -156,8 +156,8 @@ export const CosService = {
         },
         (err, data) => {
           if (err) {
-            console.error("Tencent COS upload error:", err);
-            reject(new Error(`腾讯云 COS 上传失败: ${err.message || JSON.stringify(err)}`));
+            console.error("cloud object storage upload error:", err);
+            reject(new Error(`云端存储上传失败: ${err.message || JSON.stringify(err)}`));
             return;
           }
 
@@ -290,7 +290,7 @@ export const CosService = {
         } else {
           resolve({
             success: true,
-            message: "腾讯云 COS 凭据校验成功！",
+            message: "云端存储凭据校验成功！",
             buckets: data?.Buckets || [],
           });
         }

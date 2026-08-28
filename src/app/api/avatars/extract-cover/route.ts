@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
 
     let coverUrl = `/uploads/videos/${thumbFileName}`;
 
-    // Upload to Tencent Cloud COS if configured
+    // Upload to cloud object storage if configured
     if (CosService.isConfigured()) {
       try {
         CosService.ensureBucketPublicAndCors().catch(() => {});

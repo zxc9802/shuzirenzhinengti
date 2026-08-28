@@ -25,7 +25,7 @@ export interface AppConfig {
   storageDir: string;
   publicBaseUrl: string;
 
-  // Tencent Cloud COS Configuration
+  // cloud object storage Configuration
   cosSecretId: string;
   cosSecretKey: string;
   cosBucket: string;
@@ -123,7 +123,7 @@ const DEFAULT_CONFIG: AppConfig = {
     process.env.NEXT_PUBLIC_BASE_URL ||
     "http://localhost:3000",
 
-  // Tencent COS
+  // cloud object storage
   cosSecretId:
     process.env.COS_SECRET_ID ||
     skillDefaults.cosSecretId ||

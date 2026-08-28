@@ -97,7 +97,7 @@ export default function VideoUploader({
     const localProbe = await localProbePromise;
 
     try {
-      // 1. Direct upload video to Tencent Cloud COS (bypasses server 413 limit)
+      // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
       const videoResult = await uploadFileDirectToCos(
         file,
         file.name,
@@ -290,7 +290,7 @@ export default function VideoUploader({
                   <RefreshCw className="h-5 w-5 animate-spin" />
                 </div>
                 <div className="flex items-center justify-between w-full text-xs font-semibold text-zinc-200 mb-1.5">
-                  <span>{uploadProgress < 100 ? "正在上传素材并同步腾讯云 COS..." : "正在完成音画轨道核验与形象库归档..."}</span>
+                  <span>{uploadProgress < 100 ? "正在上传素材并同步至云端存储..." : "正在完成音画轨道核验与形象库归档..."}</span>
                   <span className="font-mono text-blue-400">{uploadProgress}%</span>
                 </div>
 
@@ -321,7 +321,7 @@ export default function VideoUploader({
                   <div className="absolute top-1.5 right-1.5">
                     {uploadedInfo.isCos ? (
                       <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-sm px-1.5 py-0.5 text-[9px] font-bold text-white shadow-sm">
-                        <Cloud className="h-2.5 w-2.5" /> 腾讯云 COS
+                        <Cloud className="h-2.5 w-2.5" /> 云端存储
                       </span>
                     ) : (
                       <span className="flex items-center gap-1 rounded-md bg-zinc-800/90 backdrop-blur-sm px-1.5 py-0.5 text-[9px] font-mono text-zinc-300">
@@ -396,7 +396,7 @@ export default function VideoUploader({
                   点击或拖拽上传口播视频
                 </p>
                 <p className="mt-1 text-xs text-zinc-400 max-w-sm">
-                  支持 MP4 / MOV 格式，上传后自动归档至形象库并存入腾讯云 COS
+                  支持 MP4 / MOV 格式，上传后自动归档至形象库并存入云端存储
                 </p>
               </div>
             )}
