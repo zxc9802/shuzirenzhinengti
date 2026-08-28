@@ -2,15 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { CosService } from "@/lib/cos";
 import { recoverStuckLipsyncTask } from "@/lib/engine/recover-lipsync";
 import { TaskStore } from "@/lib/store/task-store";
+import {
+  canAccessTask,
+  resolveAccessContext,
+  taskNotFoundResponse,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const { id } = await params;
   let task = await TaskStore.getAsync(id);
-  if (!task) {
-    return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  if (!task || !canAccessTask(access, task)) {
+    return taskNotFoundResponse();
   }
 
   const stuckDownloading =
@@ -42,7 +53,17 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const { id } = await params;
+  const task = TaskStore.get(id);
+  if (!task || !canAccessTask(access, task)) {
+    return taskNotFoundResponse();
+  }
+
   const deleted = TaskStore.delete(id);
   return NextResponse.json({ success: deleted });
 }

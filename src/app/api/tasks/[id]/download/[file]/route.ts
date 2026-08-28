@@ -3,13 +3,30 @@ import fs from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { CosService } from "@/lib/cos";
+import { TaskStore } from "@/lib/store/task-store";
+import {
+  canAccessTask,
+  resolveAccessContext,
+  taskNotFoundResponse,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string; file: string }> }
 ) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const { id, file } = await params;
   const safeFileName = path.basename(file);
+
+  const task = TaskStore.get(id);
+  if (!task || !canAccessTask(access, task)) {
+    return taskNotFoundResponse();
+  }
 
   if (CosService.isConfigured()) {
     const cosKey = `jobs/${id}/${safeFileName}`;

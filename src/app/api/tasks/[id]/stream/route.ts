@@ -1,15 +1,26 @@
 import { NextRequest } from "next/server";
 import { TaskStore, TaskItem } from "@/lib/store/task-store";
+import {
+  canAccessTask,
+  resolveAccessContext,
+  taskNotFoundResponse,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const { id } = await params;
   const task = TaskStore.get(id);
 
-  if (!task) {
-    return new Response("Task not found", { status: 404 });
+  if (!task || !canAccessTask(access, task)) {
+    return taskNotFoundResponse();
   }
 
   const encoder = new TextEncoder();

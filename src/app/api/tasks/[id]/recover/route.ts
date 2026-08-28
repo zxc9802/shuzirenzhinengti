@@ -4,15 +4,26 @@ import {
   isRecoverableLipsyncTask,
   recoverStuckLipsyncTask,
 } from "@/lib/engine/recover-lipsync";
+import {
+  canAccessTask,
+  resolveAccessContext,
+  taskNotFoundResponse,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const { id } = await params;
   const task = (await TaskStore.getAsync(id)) || TaskStore.get(id);
-  if (!task) {
-    return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+  if (!task || !canAccessTask(access, task)) {
+    return taskNotFoundResponse();
   }
 
   if (task.status === "completed" && task.results?.finalVideoUrl) {

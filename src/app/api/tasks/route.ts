@@ -3,12 +3,7 @@ import { TaskStore } from "@/lib/store/task-store";
 import { runDigitalHumanPipeline } from "@/lib/engine/pipeline";
 import { getAppConfig } from "@/lib/config";
 import { isLipsyncProvider } from "@/lib/lipsync-provider";
-import {
-  getMainAppSessionCookieName,
-  readMainAppSessionCookie,
-  isSsoConfigured,
-  type MainAppUser,
-} from "@/lib/main-app-sso";
+import type { MainAppUser } from "@/lib/main-app-sso";
 import {
   estimateTaskDuration,
   reserveMainAppCredits,
@@ -16,10 +11,22 @@ import {
   POINTS_PER_SECOND,
   CNY_PER_SECOND,
 } from "@/lib/main-app-billing";
+import {
+  resolveAccessContext,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const access = await resolveAccessContext(req);
+  if (access.isolated && !access.userId) {
+    return unauthorizedResponse();
+  }
+
   const tasks = await TaskStore.getAllAsync();
-  return NextResponse.json({ tasks });
+  const visibleTasks = access.isolated && !access.isAdmin
+    ? tasks.filter((task) => task.userId === access.userId)
+    : tasks;
+  return NextResponse.json({ tasks: visibleTasks });
 }
 
 export async function POST(req: NextRequest) {
@@ -46,15 +53,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Resolve SSO User Session
-    const cookieValue = req.cookies.get(getMainAppSessionCookieName())?.value;
-    const session = await readMainAppSessionCookie(cookieValue);
+    // 1. Resolve SSO User Session（SSO 已配置时必须持有效会话，防止伪造 x-user-id 扣他人积分）
+    const access = await resolveAccessContext(req);
+    if (access.isolated && !access.session) {
+      return unauthorizedResponse();
+    }
+    const session = access.session;
     const user: Partial<MainAppUser> = session?.user || {
       id: req.headers.get("x-user-id") || "local_user",
       account: req.headers.get("x-user-account") || "local@qycm.top",
       nickname: "本地用户",
-      role: isSsoConfigured() ? "user" : "admin",
-      billingAudience: isSsoConfigured() ? "external" : "internal",
+      role: "admin",
+      billingAudience: "internal",
     };
 
     // 2. Estimate Task Duration and Reserve Credits (200 points/s for external users)
