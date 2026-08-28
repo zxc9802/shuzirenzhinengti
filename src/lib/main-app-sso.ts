@@ -209,6 +209,7 @@ export async function exchangeMainAppSsoTicket(
       "x-qycm-sso-client-secret": clientSecret,
     },
     body: JSON.stringify({ ticket }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   const payload = (await response
@@ -253,6 +254,7 @@ export async function validateMainAppSession(
     const response = await fetch(probeUrl, {
       cache: "no-store",
       headers: { Authorization: `Bearer ${session.token}` },
+      signal: AbortSignal.timeout(8_000),
     });
     if (response.ok) {
       sessionValidationCache.set(
