@@ -35,5 +35,5 @@ export function estimateSpeechSeconds(charCount: number): number {
 
 export function pollTimeoutMs(durationSeconds: number): number {
   const scaled = Math.ceil(durationSeconds) * 25 * 1000;
-  return Math.min(Math.max(scaled, 20 * 60 * 1000), 90 * 60 * 1000);
+  return Math.min(Math.max(scaled, 60 * 60 * 1000), 120 * 60 * 1000);
 }
