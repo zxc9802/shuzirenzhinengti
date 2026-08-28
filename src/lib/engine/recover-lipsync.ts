@@ -4,6 +4,7 @@ import { CosService } from "../cos";
 import { TaskItem, TaskStore } from "../store/task-store";
 import { finalizeVideo, probeMedia, sha256File } from "./ffmpeg";
 import { downloadFileToDisk } from "./download-file";
+import { downloadPixverseResult } from "./pixverse-ingest";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 
 const PIXVERSE_JOB_RE = /任务已建立 \(ID:\s*([^，)\s]+)\)/;
@@ -172,12 +173,16 @@ export async function recoverStuckLipsyncTask(taskId: string): Promise<TaskItem>
 
   const log = (msg: string) => TaskStore.addLog(taskId, msg, "info");
   log("[PixVerse] 正在重新下载已渲染成片（不会再扣费）...");
-  const downloaded = await downloadFileToDisk({
+  const downloaded = await downloadPixverseResult({
     url: resultUrl,
     outputPath: rawPath,
-    onProgress: (msg) => log(`[PixVerse] 正在拉取成片 ${msg}`),
+    onLog: log,
   });
-  log(`[PixVerse] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB)`);
+  log(
+    `[PixVerse] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB${
+      downloaded.viaRelay ? "，经广州中转" : ""
+    })`
+  );
 
   await ensureLocalFile({
     localPath: audioPath,

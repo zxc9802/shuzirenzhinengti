@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "mcp:sse": "node scripts/heygen_mcp_sse_server.mjs",
-    "mcp:stdio": "node scripts/heygen_mcp_server.mjs"
+    "mcp:stdio": "node scripts/heygen_mcp_server.mjs",
+    "ingest:deploy": "node scripts/deploy-pixverse-ingest.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

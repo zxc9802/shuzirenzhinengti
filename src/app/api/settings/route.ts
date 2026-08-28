@@ -11,9 +11,13 @@ export async function GET() {
     openluxApiKey: config.openluxApiKey
       ? config.openluxApiKey.slice(0, 4) + "••••••••" + config.openluxApiKey.slice(-4)
       : "",
+    pixverseIngestToken: config.pixverseIngestToken
+      ? config.pixverseIngestToken.slice(0, 4) + "••••••••" + config.pixverseIngestToken.slice(-4)
+      : "",
     rawKeysPresent: {
       indextts: !!config.indexttsApiKey,
       openlux: !!config.openluxApiKey,
+      pixverseIngest: !!config.pixverseIngestToken,
     },
   };
   return NextResponse.json({ config: safeConfig });
@@ -27,6 +31,9 @@ export async function POST(req: NextRequest) {
   }
   if (body.openluxApiKey && body.openluxApiKey.includes("••••")) {
     delete body.openluxApiKey;
+  }
+  if (body.pixverseIngestToken && body.pixverseIngestToken.includes("••••")) {
+    delete body.pixverseIngestToken;
   }
 
   const updated = saveAppConfig(body);

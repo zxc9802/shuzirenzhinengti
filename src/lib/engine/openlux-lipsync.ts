@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { getAppConfig } from "../config";
 import { concatVideos, probeMedia, sliceMedia } from "./ffmpeg";
-import { downloadFileToDisk } from "./download-file";
+import { downloadPixverseResult } from "./pixverse-ingest";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
 
 export interface OpenLuxJobProgress {
@@ -247,12 +247,16 @@ export class OpenLuxLipsyncAdapter {
       throw new Error("[PixVerse] 对口型任务超时");
     }
 
-    const downloaded = await downloadFileToDisk({
+    const downloaded = await downloadPixverseResult({
       url: completedUrl,
       outputPath,
-      onProgress: (msg) => onLog(`[PixVerse] 正在拉取成片 ${msg}`),
+      onLog,
     });
-    onLog(`[PixVerse] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB)`);
+    onLog(
+      `[PixVerse] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB${
+        downloaded.viaRelay ? "，经广州中转" : ""
+      })`
+    );
 
     return {
       lipsyncId,

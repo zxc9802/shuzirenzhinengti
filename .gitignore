@@ -1,5 +1,5 @@
 # Dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.js
 
@@ -33,3 +33,4 @@ yarn-error.log*
 # OS Files
 .DS_Store
 *.pem
+*.zip

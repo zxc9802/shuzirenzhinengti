@@ -17,6 +17,8 @@ export interface AppConfig {
   openluxApiKey: string;
   openluxBaseUrl: string;
   openluxLipsyncModel: string;
+  pixverseIngestUrl: string;
+  pixverseIngestToken: string;
   storageDir: string;
   publicBaseUrl: string;
 
@@ -109,6 +111,8 @@ const DEFAULT_CONFIG: AppConfig = {
   openluxApiKey: process.env.OPENLUX_API_KEY || "",
   openluxBaseUrl: process.env.OPENLUX_API_BASE_URL || "https://api.openlux.ai",
   openluxLipsyncModel: process.env.OPENLUX_LIPSYNC_MODEL || "pixverse-lipsync",
+  pixverseIngestUrl: process.env.PIXVERSE_INGEST_URL || "",
+  pixverseIngestToken: process.env.PIXVERSE_INGEST_TOKEN || "",
   storageDir: path.join(process.cwd(), "public", "jobs"),
   publicBaseUrl:
     process.env.PUBLIC_BASE_URL ||

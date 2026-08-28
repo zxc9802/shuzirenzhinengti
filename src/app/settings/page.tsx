@@ -43,6 +43,8 @@ export default function SettingsPage() {
     openluxApiKey: "",
     openluxBaseUrl: "https://api.openlux.ai",
     openluxLipsyncModel: "pixverse-lipsync",
+    pixverseIngestUrl: "",
+    pixverseIngestToken: "",
 
     // Tencent Cloud COS
     cosSecretId: "",
@@ -801,6 +803,32 @@ export default function SettingsPage() {
               >
                 HeyGen
               </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className="text-xs font-medium text-zinc-300">广州云函数中转地址</label>
+              <input
+                type="text"
+                value={config.pixverseIngestUrl || ""}
+                onChange={(e) => setConfig({ ...config, pixverseIngestUrl: e.target.value })}
+                placeholder="https://xxxxx.preview.tencentscf.com"
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                新加坡服务器先让广州函数去拉 PixVerse，再从新加坡 COS 取片。不填则仍直连。
+              </p>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className="text-xs font-medium text-zinc-300">中转令牌</label>
+              <input
+                type="password"
+                value={config.pixverseIngestToken || ""}
+                onChange={(e) => setConfig({ ...config, pixverseIngestToken: e.target.value })}
+                placeholder="与云函数 INGEST_TOKEN 一致"
+                className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+              />
             </div>
           </div>
         </div>
