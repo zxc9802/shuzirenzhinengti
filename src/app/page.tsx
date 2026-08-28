@@ -98,20 +98,6 @@ export default function StudioPage() {
         }
       }
 
-      if (!taskToLoad) {
-        try {
-          const listResp = await fetch(`/api/tasks?t=${Date.now()}`);
-          if (listResp.ok) {
-            const listData = await listResp.json();
-            if (listData.tasks && listData.tasks.length > 0) {
-              taskToLoad = listData.tasks[0];
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-
       if (taskToLoad) {
         setCurrentTask(taskToLoad);
         localStorage.setItem(ACTIVE_TASK_KEY, taskToLoad.id);
