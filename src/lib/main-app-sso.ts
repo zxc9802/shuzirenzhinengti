@@ -248,8 +248,9 @@ export async function validateMainAppSession(
   }
   if ((sessionValidationCache.get(cacheKey) ?? 0) > now) return true;
 
+  const probeUrl = `${getMainAppUrl()}/api/sso/session`;
   try {
-    const response = await fetch(`${getMainAppUrl()}/api/sso/session`, {
+    const response = await fetch(probeUrl, {
       cache: "no-store",
       headers: { Authorization: `Bearer ${session.token}` },
     });
@@ -258,9 +259,18 @@ export async function validateMainAppSession(
         cacheKey,
         Math.min(session.expiresAt, Date.now() + SESSION_VALIDATION_CACHE_MS),
       );
+      return true;
     }
-    return response.ok;
-  } catch {
+    // 主站拒绝该 token（401/403 等）——打出状态码便于在生产日志定位
+    console.error(
+      `[SSO] Session validation rejected by main site: HTTP ${response.status} url=${probeUrl}`
+    );
+    return false;
+  } catch (err: any) {
+    // 出网失败 / DNS / 超时——middleware 会把用户踢回主站形成登录循环，必须留痕
+    console.error(
+      `[SSO] Session validation request failed: ${err?.message || err} url=${probeUrl}`
+    );
     return false;
   }
 }
