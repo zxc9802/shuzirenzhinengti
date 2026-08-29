@@ -1,5 +1,5 @@
 const PRODUCT = "shuziren";
-const COOKIE_NAME = "qycm_shuziren_sso";
+const COOKIE_NAME = "qycm_shuziren_sso_v2";
 const MAIN_APP_URL_FALLBACK = "https://www.qycm.top";
 const PUBLIC_SHUZIREN_APP_URL = "https://shuziren.qycm.top";
 const SSO_EXCHANGE_TIMEOUT_MS = 30_000;
@@ -180,7 +180,7 @@ export async function createMainAppSessionCookie(
     await sessionKey(),
     toArrayBuffer(new TextEncoder().encode(JSON.stringify(session))),
   );
-  return `v1.${base64UrlEncode(iv)}.${base64UrlEncode(
+  return `v2.${base64UrlEncode(iv)}.${base64UrlEncode(
     new Uint8Array(encrypted),
   )}`;
 }
@@ -190,7 +190,7 @@ export async function readMainAppSessionCookie(
 ): Promise<MainAppSession | null> {
   if (!value) return null;
   const [version, ivValue, encryptedValue, extra] = value.split(".");
-  if (version !== "v1" || !ivValue || !encryptedValue || extra) return null;
+  if (version !== "v2" || !ivValue || !encryptedValue || extra) return null;
   const iv = base64UrlDecode(ivValue);
   const encrypted = base64UrlDecode(encryptedValue);
   if (!iv || !encrypted) return null;

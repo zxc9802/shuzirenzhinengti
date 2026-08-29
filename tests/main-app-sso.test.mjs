@@ -15,7 +15,7 @@ test("shuziren site keeps the main-site SSO callback and encrypted session contr
   ]);
 
   assert.match(sso, /const PRODUCT = ["']shuziren["']/);
-  assert.match(sso, /const COOKIE_NAME = ["']qycm_shuziren_sso["']/);
+  assert.match(sso, /const COOKIE_NAME = ["']qycm_shuziren_sso_v2["']/);
   assert.match(sso, /https:\/\/shuziren\.qycm\.top/);
   assert.match(sso, /externalSso/);
   assert.match(sso, /AES-GCM/);
@@ -85,8 +85,13 @@ test("fresh encrypted SSO sessions can use the bounded validation grace", async 
       validatedAt: now,
     };
     const encrypted = await sso.createMainAppSessionCookie(freshSession);
+    assert.match(encrypted, /^v2\./);
     const decrypted = await sso.readMainAppSessionCookie(encrypted);
     assert.deepEqual(decrypted, freshSession);
+    assert.equal(
+      await sso.readMainAppSessionCookie(encrypted.replace(/^v2\./, "v1.")),
+      null,
+    );
     assert.equal(sso.isMainAppSessionWithinValidationGrace(freshSession), true);
 
     globalThis.fetch = async () => {
