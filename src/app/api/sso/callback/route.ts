@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
       await createMainAppSessionCookie(session),
       getMainAppSessionCookieOptions(session.expiresAt),
     );
+    response.headers.set("Cache-Control", "private, no-store");
     return response;
   } catch (error: any) {
     // 友好错误页：说明原因并允许重试，避免用户看到裸 JSON 或误判为登录循环
@@ -54,7 +55,10 @@ export async function GET(request: NextRequest) {
 </html>`;
     return new NextResponse(html, {
       status: 401,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+      },
     });
   }
 }

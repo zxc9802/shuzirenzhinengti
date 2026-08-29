@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getMainAppSessionCookieName,
   getMainAppSessionCookieOptions,
+  isMainAppSessionWithinValidationGrace,
   readMainAppSessionCookie,
   validateMainAppSession,
   fetchMainAppUserProfile,
@@ -41,9 +42,20 @@ export async function GET(request: NextRequest) {
   const session = await readMainAppSessionCookie(
     request.cookies.get(getMainAppSessionCookieName())?.value,
   );
-  if (session && (await validateMainAppSession(session))) {
+  const sessionValidation = session
+    ? await validateMainAppSession(session)
+    : "invalid";
+  const usesValidationGrace = Boolean(
+    session &&
+    sessionValidation === "unavailable" &&
+    isMainAppSessionWithinValidationGrace(session),
+  );
+
+  if (session && (sessionValidation === "valid" || usesValidationGrace)) {
     // Try to fetch latest live points balance from main app
-    const liveProfile = await fetchMainAppUserProfile(session.token);
+    const liveProfile = usesValidationGrace
+      ? null
+      : await fetchMainAppUserProfile(session.token);
     const user = {
       ...session.user,
       ...liveProfile,
@@ -59,8 +71,19 @@ export async function GET(request: NextRequest) {
           cnyPerSecond: CNY_PER_SECOND,
           isExternal,
         },
+        ssoValidation: usesValidationGrace ? "grace" : "valid",
       },
     });
+  }
+
+  if (sessionValidation === "unavailable") {
+    return NextResponse.json(
+      { error: "Main site is temporarily unavailable. Please retry shortly." },
+      {
+        status: 503,
+        headers: { "Retry-After": "3", "Cache-Control": "no-store" },
+      },
+    );
   }
 
   const response = NextResponse.json(
@@ -73,4 +96,3 @@ export async function GET(request: NextRequest) {
   });
   return response;
 }
-

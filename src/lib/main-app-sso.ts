@@ -2,7 +2,11 @@ const PRODUCT = "shuziren";
 const COOKIE_NAME = "qycm_shuziren_sso";
 const MAIN_APP_URL_FALLBACK = "https://www.qycm.top";
 const PUBLIC_SHUZIREN_APP_URL = "https://shuziren.qycm.top";
+const SSO_EXCHANGE_TIMEOUT_MS = 30_000;
+const SSO_SESSION_VALIDATION_TIMEOUT_MS = 20_000;
 const SESSION_VALIDATION_CACHE_MS = 30_000;
+const SESSION_VALIDATION_GRACE_MS = 5 * 60_000;
+const SESSION_CLOCK_SKEW_MS = 60_000;
 const sessionValidationCache = new Map<string, number>();
 
 export type MainAppUser = {
@@ -21,7 +25,13 @@ export type MainAppSession = {
   token: string;
   user: MainAppUser;
   expiresAt: number;
+  validatedAt: number;
 };
+
+export type MainAppSessionValidationResult =
+  | "valid"
+  | "invalid"
+  | "unavailable";
 
 type ExchangeResponse = {
   success?: boolean;
@@ -98,12 +108,21 @@ function isMainAppSession(value: unknown): value is MainAppSession {
     isMainAppUser(session.user) &&
     typeof session.expiresAt === "number" &&
     Number.isFinite(session.expiresAt) &&
-    session.expiresAt > Date.now()
+    session.expiresAt > Date.now() &&
+    typeof session.validatedAt === "number" &&
+    Number.isFinite(session.validatedAt) &&
+    session.validatedAt <= Date.now() + SESSION_CLOCK_SKEW_MS
   );
 }
 
 function isFutureExpiration(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > Date.now();
+}
+
+export function isMainAppSessionWithinValidationGrace(
+  session: MainAppSession,
+): boolean {
+  return Date.now() - session.validatedAt <= SESSION_VALIDATION_GRACE_MS;
 }
 
 export function getMainAppUrl(): string {
@@ -209,7 +228,7 @@ export async function exchangeMainAppSsoTicket(
       "x-qycm-sso-client-secret": clientSecret,
     },
     body: JSON.stringify({ ticket }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(SSO_EXCHANGE_TIMEOUT_MS),
   });
 
   const payload = (await response
@@ -235,45 +254,52 @@ export async function exchangeMainAppSsoTicket(
       token,
       user,
       expiresAt,
+      validatedAt: Date.now(),
     },
   };
 }
 
 export async function validateMainAppSession(
   session: MainAppSession,
-): Promise<boolean> {
+): Promise<MainAppSessionValidationResult> {
   const now = Date.now();
   const cacheKey = await sessionValidationCacheKey(session.token);
   for (const [key, expiresAt] of sessionValidationCache) {
     if (expiresAt <= now) sessionValidationCache.delete(key);
   }
-  if ((sessionValidationCache.get(cacheKey) ?? 0) > now) return true;
+  if ((sessionValidationCache.get(cacheKey) ?? 0) > now) return "valid";
 
   const probeUrl = `${getMainAppUrl()}/api/sso/session`;
   try {
     const response = await fetch(probeUrl, {
       cache: "no-store",
       headers: { Authorization: `Bearer ${session.token}` },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(SSO_SESSION_VALIDATION_TIMEOUT_MS),
     });
     if (response.ok) {
       sessionValidationCache.set(
         cacheKey,
         Math.min(session.expiresAt, Date.now() + SESSION_VALIDATION_CACHE_MS),
       );
-      return true;
+      return "valid";
     }
-    // 主站拒绝该 token（401/403 等）——打出状态码便于在生产日志定位
+    if (response.status === 401 || response.status === 403) {
+      console.error(
+        `[SSO] Session validation rejected by main site: HTTP ${response.status} url=${probeUrl}`
+      );
+      return "invalid";
+    }
+
     console.error(
-      `[SSO] Session validation rejected by main site: HTTP ${response.status} url=${probeUrl}`
+      `[SSO] Session validation unavailable: HTTP ${response.status} url=${probeUrl}`
     );
-    return false;
+    return "unavailable";
   } catch (err: any) {
-    // 出网失败 / DNS / 超时——middleware 会把用户踢回主站形成登录循环，必须留痕
+    // 出网失败 / DNS / 超时不等于凭证失效，调用方必须避免清 Cookie 重登。
     console.error(
       `[SSO] Session validation request failed: ${err?.message || err} url=${probeUrl}`
     );
-    return false;
+    return "unavailable";
   }
 }
 
@@ -292,6 +318,7 @@ export async function fetchMainAppUserProfile(
     const response = await fetch(`${getMainAppUrl()}/api/sso/session`, {
       cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(SSO_SESSION_VALIDATION_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     const payload = await response.json();
