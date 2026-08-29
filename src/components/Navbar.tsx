@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, History, Users, Mic, Coins, ShieldCheck, User } from "lucide-react";
+import { Video, History, Users, Mic, Coins, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import HeyGenConnectButton from "./HeyGenConnectButton";
 
@@ -105,7 +105,7 @@ export default function Navbar() {
           {/* User & Points Badge */}
           {session?.user && (
             <div className="hidden md:flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-1.5 text-xs">
-              {isExternal ? (
+              {isExternal && (
                 <div
                   className="flex items-center gap-1.5 font-medium text-amber-300"
                   title={`主站外部用户费率: ${session?.billing?.ratePerSecond ?? 20}积分/秒 (0.2元/秒)`}
@@ -118,18 +118,8 @@ export default function Navbar() {
                     {session?.billing?.ratePerSecond ?? 20}分/秒
                   </span>
                 </div>
-              ) : (
-                <div
-                  className="flex items-center gap-1.5 text-emerald-300 font-medium"
-                  title="内部/管理员账号免积分"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-[11px] text-emerald-400/90 font-medium">
-                    内部免扣费
-                  </span>
-                </div>
               )}
-              <span className="text-zinc-500">|</span>
+              {isExternal && <span className="text-zinc-500">|</span>}
               <span className="text-zinc-300 truncate max-w-[100px] text-[11px]" title={session.user.account}>
                 {session.user.nickname || session.user.account}
               </span>
