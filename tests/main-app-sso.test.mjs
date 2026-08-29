@@ -25,6 +25,7 @@ test("shuziren site keeps the main-site SSO callback and encrypted session contr
   assert.match(callback, /createMainAppSessionCookie/);
   assert.match(session, /validateMainAppSession/);
   assert.match(middleware, /api\/sso\/callback/);
+  assert.match(middleware, /export const runtime = ["']nodejs["']/);
   assert.match(middleware, /request\.nextUrl\.pathname\.startsWith\(["']\/api\/["']\)/);
   assert.match(middleware, /getMainAppSsoLaunchUrl/);
   assert.match(env, /MAIN_APP_SSO_EXCHANGE_URL=https:\/\/www\.qycm\.top\/api\/external-sso\/shuziren\/exchange/);

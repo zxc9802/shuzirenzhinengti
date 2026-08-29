@@ -9,6 +9,8 @@ import {
   isSsoConfigured,
 } from "@/lib/main-app-sso";
 
+export const runtime = "nodejs";
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
