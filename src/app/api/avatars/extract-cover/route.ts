@@ -4,9 +4,18 @@ import path from "path";
 import { extractVideoThumbnail } from "@/lib/engine/ffmpeg";
 import { CosService } from "@/lib/cos";
 import { AvatarStore } from "@/lib/store/avatar-store";
+import {
+  canManageMediaItem,
+  mediaNotFoundResponse,
+  resolveAccessContext,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function POST(req: NextRequest) {
   try {
+    const access = await resolveAccessContext(req);
+    if (access.isolated && !access.userId) return unauthorizedResponse();
+
     const body = await req.json();
     const { id, timestamp = 1.0 } = body;
 
@@ -15,9 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     const avatar = AvatarStore.get(id);
-    if (!avatar) {
-      return NextResponse.json({ error: "未找到对应形象素材" }, { status: 404 });
-    }
+    if (!avatar || !canManageMediaItem(access, avatar)) return mediaNotFoundResponse();
 
     const videoSrc = (avatar.videoPath && fs.existsSync(avatar.videoPath))
       ? avatar.videoPath
@@ -27,7 +34,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "该形象素材无有效视频路径或链接" }, { status: 400 });
     }
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "videos");
+    const ownerKey = (avatar.userId || access.userId || "legacy").replace(
+      /[^a-zA-Z0-9_-]/g,
+      "_"
+    );
+    const uploadsDir = path.join(
+      process.cwd(),
+      "public",
+      "uploads",
+      "users",
+      ownerKey,
+      "thumbnails"
+    );
     fs.mkdirSync(uploadsDir, { recursive: true });
 
     const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -41,13 +59,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "封面截取失败，未生成有效画面" }, { status: 500 });
     }
 
-    let coverUrl = `/uploads/videos/${thumbFileName}`;
+    let coverUrl = `/uploads/users/${ownerKey}/thumbnails/${thumbFileName}`;
 
     // Upload to cloud object storage if configured
     if (CosService.isConfigured()) {
       try {
         CosService.ensureBucketPublicAndCors().catch(() => {});
-        const cosThumbKey = `uploads/thumbnails/${thumbFileName}`;
+        const cosThumbKey = `uploads/users/${ownerKey}/thumbnails/${thumbFileName}`;
         const cosUrl = await CosService.uploadFile(thumbPath, cosThumbKey);
         coverUrl = cosUrl;
       } catch (cosErr: any) {

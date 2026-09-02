@@ -190,14 +190,16 @@ export default function AvatarLibrary({
                       <span className="text-[9px] text-zinc-500">
                         {new Date(avatar.createdAt).toLocaleDateString("zh-CN")}
                       </span>
-                      <button
-                        type="button"
-                        title="从形象库删除"
-                        onClick={(e) => handleDeleteAvatar(avatar.id, e)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      {avatar.canManage !== false && (
+                        <button
+                          type="button"
+                          title="从形象库删除"
+                          onClick={(e) => handleDeleteAvatar(avatar.id, e)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

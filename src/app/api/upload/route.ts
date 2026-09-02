@@ -6,9 +6,17 @@ import { Readable } from "stream";
 import { probeMedia, extractVideoThumbnail } from "@/lib/engine/ffmpeg";
 import { CosService } from "@/lib/cos";
 import { AvatarStore } from "@/lib/store/avatar-store";
+import {
+  resolveAccessContext,
+  unauthorizedResponse,
+} from "@/lib/access-control";
 
 export async function POST(req: NextRequest) {
   try {
+    const access = await resolveAccessContext(req);
+    if (access.isolated && !access.userId) return unauthorizedResponse();
+    const ownerKey = (access.userId || "local").replace(/[^a-zA-Z0-9_-]/g, "_");
+
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const avatarName = (formData.get("name") as string)?.trim();
@@ -17,7 +25,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "未检测到上传文件" }, { status: 400 });
     }
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "videos");
+    const uploadsDir = path.join(
+      process.cwd(),
+      "public",
+      "uploads",
+      "users",
+      ownerKey,
+      "videos"
+    );
     fs.mkdirSync(uploadsDir, { recursive: true });
 
     const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
@@ -28,7 +43,7 @@ export async function POST(req: NextRequest) {
     const writeStream = fs.createWriteStream(filePath);
     await pipeline(nodeReadable, writeStream);
 
-    let fileUrl = `/uploads/videos/${safeName}`;
+    let fileUrl = `/uploads/users/${ownerKey}/videos/${safeName}`;
     let coverUrl = "";
     let isCos = false;
 
@@ -51,7 +66,7 @@ export async function POST(req: NextRequest) {
         const clientThumbBuffer = Buffer.from(await clientThumb.arrayBuffer());
         if (clientThumbBuffer.length > 500) {
           fs.writeFileSync(thumbPath, clientThumbBuffer);
-          coverUrl = `/uploads/videos/${thumbFileName}`;
+          coverUrl = `/uploads/users/${ownerKey}/videos/${thumbFileName}`;
         }
       } catch (clientThumbErr: any) {
         console.warn("Client thumbnail write error:", clientThumbErr.message);
@@ -63,7 +78,7 @@ export async function POST(req: NextRequest) {
       try {
         const seekTime = probe?.durationSeconds && probe.durationSeconds > 2 ? 1.0 : 0.5;
         await extractVideoThumbnail(filePath, thumbPath, seekTime);
-        coverUrl = `/uploads/videos/${thumbFileName}`;
+        coverUrl = `/uploads/users/${ownerKey}/videos/${thumbFileName}`;
       } catch (thumbErr: any) {
         console.warn("FFmpeg thumbnail extraction error:", thumbErr.message);
       }
@@ -74,13 +89,13 @@ export async function POST(req: NextRequest) {
       try {
         CosService.ensureBucketPublicAndCors().catch(() => {});
 
-        const cosKey = `uploads/videos/${safeName}`;
+        const cosKey = `uploads/users/${ownerKey}/videos/${safeName}`;
         const cosUrl = await CosService.uploadFile(filePath, cosKey);
         fileUrl = cosUrl;
         isCos = true;
 
         if (fs.existsSync(thumbPath)) {
-          const cosThumbKey = `uploads/thumbnails/${safeName}.jpg`;
+          const cosThumbKey = `uploads/users/${ownerKey}/thumbnails/${safeName}.jpg`;
           const thumbCosUrl = await CosService.uploadFile(thumbPath, cosThumbKey);
           coverUrl = thumbCosUrl;
         }
@@ -96,6 +111,7 @@ export async function POST(req: NextRequest) {
       "我的口播形象";
 
     const savedAvatar = AvatarStore.create({
+      userId: access.userId || undefined,
       name: displayName,
       videoUrl: fileUrl,
       videoPath: filePath,
@@ -117,7 +133,7 @@ export async function POST(req: NextRequest) {
       size: file.size,
       probe,
       isCos,
-      avatar: savedAvatar,
+      avatar: { ...savedAvatar, canManage: true },
     });
   } catch (err: any) {
     return NextResponse.json(

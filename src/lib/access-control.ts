@@ -5,6 +5,10 @@ import {
   readMainAppSessionCookie,
   type MainAppSession,
 } from "./main-app-sso";
+export {
+  canManageMediaItem,
+  canViewAllMedia,
+} from "./media-access-policy";
 
 export interface AccessContext {
   /** SSO 已配置时启用账号隔离 */
@@ -65,4 +69,9 @@ export function unauthorizedResponse(): NextResponse {
 /** 非本人任务返回 404，避免泄露任务是否存在 */
 export function taskNotFoundResponse(): NextResponse {
   return NextResponse.json({ error: "Task not found" }, { status: 404 });
+}
+
+/** 非本人资源返回 404，避免泄露资源是否存在。 */
+export function mediaNotFoundResponse(): NextResponse {
+  return NextResponse.json({ error: "Media not found" }, { status: 404 });
 }

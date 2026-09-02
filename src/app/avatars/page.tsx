@@ -135,19 +135,21 @@ function AvatarCardItem({
           <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-900/80">
             <Video className="h-10 w-10 text-zinc-600 mb-2" />
             <p className="text-xs text-zinc-400">暂无封面或正在加载</p>
-            <button
-              type="button"
-              onClick={handleReExtractCover}
-              disabled={isExtracting}
-              className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow"
-            >
-              {isExtracting ? (
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Camera className="h-3.5 w-3.5" />
-              )}
-              <span>立即抽取封面</span>
-            </button>
+            {avatar.canManage !== false && (
+              <button
+                type="button"
+                onClick={handleReExtractCover}
+                disabled={isExtracting}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow"
+              >
+                {isExtracting ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" />
+                )}
+                <span>立即抽取封面</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -165,22 +167,24 @@ function AvatarCardItem({
         </div>
 
         {/* Re-extract Action button on top-left hover */}
-        <div className="absolute top-2.5 left-2.5 z-20">
-          <button
-            type="button"
-            title="重新截取第1秒清晰封面"
-            onClick={handleReExtractCover}
-            disabled={isExtracting}
-            className="flex items-center gap-1 rounded-lg bg-black/70 hover:bg-blue-600 backdrop-blur-md px-2 py-1 text-[10px] font-medium text-zinc-200 hover:text-white transition-all shadow-md cursor-pointer border border-white/[0.1]"
-          >
-            {isExtracting ? (
-              <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
-            ) : (
-              <Camera className="h-3 w-3" />
-            )}
-            <span>{isExtracting ? "抽帧中..." : "重新抽封面"}</span>
-          </button>
-        </div>
+        {avatar.canManage !== false && (
+          <div className="absolute top-2.5 left-2.5 z-20">
+            <button
+              type="button"
+              title="重新截取第1秒清晰封面"
+              onClick={handleReExtractCover}
+              disabled={isExtracting}
+              className="flex items-center gap-1 rounded-lg bg-black/70 hover:bg-blue-600 backdrop-blur-md px-2 py-1 text-[10px] font-medium text-zinc-200 hover:text-white transition-all shadow-md cursor-pointer border border-white/[0.1]"
+            >
+              {isExtracting ? (
+                <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+              ) : (
+                <Camera className="h-3 w-3" />
+              )}
+              <span>{isExtracting ? "抽帧中..." : "重新抽封面"}</span>
+            </button>
+          </div>
+        )}
 
         {/* Toast / extraction feedback */}
         {extractMsg && (
@@ -207,14 +211,16 @@ function AvatarCardItem({
             <h3 className="font-bold text-sm text-zinc-100 truncate" title={avatar.name}>
               {avatar.name}
             </h3>
-            <button
-              type="button"
-              title="删除此形象"
-              onClick={(e) => onDelete(avatar.id, e)}
-              className="text-zinc-500 hover:text-rose-400 p-1 rounded-md transition-colors"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {avatar.canManage !== false && (
+              <button
+                type="button"
+                title="删除此形象"
+                onClick={(e) => onDelete(avatar.id, e)}
+                className="text-zinc-500 hover:text-rose-400 p-1 rounded-md transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-2 mt-2.5 text-xs text-zinc-400 bg-black/30 p-2 rounded-xl border border-white/[0.05]">

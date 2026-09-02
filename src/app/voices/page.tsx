@@ -312,7 +312,7 @@ export default function VoicesPage() {
                         {isPlaying ? <Pause className="h-3.5 w-3.5 fill-white" /> : <Play className="h-3.5 w-3.5 fill-zinc-300 ml-0.5" />}
                       </button>
 
-                      {!voice.isDefault && (
+                      {!voice.isDefault && voice.canManage !== false && (
                         <button
                           type="button"
                           title="删除此音色"

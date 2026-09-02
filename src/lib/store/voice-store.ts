@@ -4,12 +4,14 @@ import { CosService } from "../cos";
 
 export interface VoiceItem {
   id: string;
+  userId?: string;
   name: string;
   audioUrl: string;
   audioPath?: string;
   description?: string;
   createdAt: number;
   isDefault?: boolean;
+  canManage?: boolean;
 }
 
 const VOICES_FILE_PATH = path.join(process.cwd(), ".voices.json");

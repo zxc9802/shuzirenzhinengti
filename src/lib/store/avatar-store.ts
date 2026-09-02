@@ -4,6 +4,7 @@ import { CosService } from "../cos";
 
 export interface AvatarItem {
   id: string;
+  userId?: string;
   name: string;
   videoUrl: string;
   videoPath?: string;
@@ -15,6 +16,7 @@ export interface AvatarItem {
   fileSize: number;
   createdAt: number;
   isCos?: boolean;
+  canManage?: boolean;
 }
 
 const AVATARS_FILE_PATH = path.join(process.cwd(), ".avatars.json");
