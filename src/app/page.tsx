@@ -445,9 +445,6 @@ export default function StudioPage() {
                 }`}
               >
                 <div className="text-xs font-bold text-zinc-100">A</div>
-                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  稳定对口型，按生成时长计费
-                </div>
               </button>
               <button
                 type="button"
@@ -465,9 +462,6 @@ export default function StudioPage() {
                     （默认，推荐）
                   </span>
                 </div>
-                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  默认推荐，适合公网视频和音频素材
-                </div>
               </button>
               <button
                 type="button"
@@ -480,9 +474,6 @@ export default function StudioPage() {
                 }`}
               >
                 <div className="text-xs font-bold text-zinc-100">C</div>
-                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  高精度对口型，使用套餐额度
-                </div>
               </button>
             </div>
           </div>
