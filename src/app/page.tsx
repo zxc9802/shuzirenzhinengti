@@ -444,9 +444,9 @@ export default function StudioPage() {
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}
               >
-                <div className="text-xs font-bold text-zinc-100">PixVerse Lip Sync</div>
+                <div className="text-xs font-bold text-zinc-100">A</div>
                 <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  OpenLux 直连 `pixverse-lipsync`，按秒计费，无需 HeyGen 授权
+                  稳定对口型，按生成时长计费
                 </div>
               </button>
               <button
@@ -460,13 +460,13 @@ export default function StudioPage() {
                 }`}
               >
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs font-bold text-zinc-100">VEED Lipsync</span>
+                  <span className="text-xs font-bold text-zinc-100">B</span>
                   <span className="rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold text-blue-300 border border-blue-400/30">
                     （默认，推荐）
                   </span>
                 </div>
                 <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  fal.ai 队列接口 `veed/lipsync`，用公网视频和音频直链对口型
+                  默认推荐，适合公网视频和音频素材
                 </div>
               </button>
               <button
@@ -479,9 +479,9 @@ export default function StudioPage() {
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}
               >
-                <div className="text-xs font-bold text-zinc-100">HeyGen MCP</div>
+                <div className="text-xs font-bold text-zinc-100">C</div>
                 <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
-                  官方 Precision 对口型，走套餐 Credits，需完成 MCP 授权
+                  高精度对口型，使用套餐额度
                 </div>
               </button>
             </div>

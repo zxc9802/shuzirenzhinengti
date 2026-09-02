@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Video, History, Users, Mic, Coins, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import HeyGenConnectButton from "./HeyGenConnectButton";
 
 interface SessionData {
   user: {
@@ -125,8 +124,6 @@ export default function Navbar() {
               </span>
             </div>
           )}
-
-          <HeyGenConnectButton variant="compact" />
         </div>
       </div>
     </header>
