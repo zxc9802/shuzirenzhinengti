@@ -86,3 +86,17 @@ test("new object-storage keys are namespaced by user", async () => {
   assert.match(uploadRoute, /uploads\/users\/\$\{ownerKeyFor\(access\.userId\)\}/);
   assert.match(voiceRoute, /uploads\/users\/\$\{ownerKeyFor\(access\.userId\)\}/);
 });
+
+test("only an authenticated admin can claim ownerless legacy COS avatars during recovery", async () => {
+  const avatarStore = await read("src/lib/store/avatar-store.ts");
+  const avatarRoute = await read("src/app/api/avatars/route.ts");
+
+  assert.match(avatarStore, /getAllAsync\(legacyOwnerUserId\?: string\)/);
+  assert.match(avatarStore, /avatar\.userId \|\| !legacyOwnerUserId/);
+  assert.match(avatarStore, /userId: legacyOwnerUserId/);
+  assert.match(avatarStore, /CosService\.objectExists/);
+  assert.match(
+    avatarRoute,
+    /AvatarStore\.getAllAsync\(\s*access\.isAdmin \? access\.userId \|\| undefined : undefined,?\s*\)/,
+  );
+});

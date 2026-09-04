@@ -93,7 +93,7 @@ function persistStore() {
 reloadFromDisk();
 
 export const AvatarStore = {
-  async getAllAsync(): Promise<AvatarItem[]> {
+  async getAllAsync(legacyOwnerUserId?: string): Promise<AvatarItem[]> {
     reloadFromDisk();
 
     // If local memory is empty or not yet synced with cloud, fetch from cloud object storage
@@ -104,11 +104,11 @@ export const AvatarStore = {
           memoryAvatars = cloudAvatars;
           hasLoadedFromCloud = true;
           persistStore();
-        } else {
+        } else if (memoryAvatars.length === 0) {
           // If no cloud JSON, scan existing videos in COS to auto-recover!
           const files = await CosService.listFiles("uploads/videos/");
           if (files.length > 0) {
-            const recovered: AvatarItem[] = files.map((f, idx) => {
+            const recovered: AvatarItem[] = await Promise.all(files.map(async (f, idx) => {
               const url = CosService.getPublicUrl(f.key);
               const fileName = path.basename(f.key);
               const cleanName = fileName
@@ -116,14 +116,24 @@ export const AvatarStore = {
                 .replace(/\.[^/.]+$/, "")
                 .replace(/_/g, " ") || `形象素材 ${idx + 1}`;
 
-              const thumbKey = `uploads/thumbnails/${fileName.replace(/\.[^/.]+$/, "")}.jpg`;
-              const thumbUrl = CosService.getPublicUrl(thumbKey);
+              const thumbCandidates = [
+                `uploads/thumbnails/${fileName}.jpg`,
+                `uploads/thumbnails/${fileName.replace(/\.[^/.]+$/, "")}.jpg`,
+              ];
+              let thumbKey = "";
+              for (const candidate of thumbCandidates) {
+                if (await CosService.objectExists(candidate)) {
+                  thumbKey = candidate;
+                  break;
+                }
+              }
 
               return {
                 id: `cos_recovered_${idx}_${Date.now()}`,
+                userId: legacyOwnerUserId,
                 name: cleanName,
                 videoUrl: url,
-                coverUrl: thumbUrl,
+                coverUrl: thumbKey ? CosService.getPublicUrl(thumbKey) : undefined,
                 durationSeconds: 86,
                 width: 1080,
                 height: 1920,
@@ -132,7 +142,7 @@ export const AvatarStore = {
                 createdAt: f.lastModified ? new Date(f.lastModified).getTime() : Date.now(),
                 isCos: true,
               };
-            });
+            }));
 
             if (recovered.length > 0) {
               memoryAvatars = recovered;
@@ -140,11 +150,20 @@ export const AvatarStore = {
               persistStore();
             }
           }
+          hasLoadedFromCloud = true;
         }
       } catch (err: any) {
         console.warn("Failed to load avatars from cloud:", err.message);
       }
     }
+
+    let assignedLegacyOwner = false;
+    memoryAvatars = memoryAvatars.map((avatar) => {
+      if (avatar.userId || !legacyOwnerUserId) return avatar;
+      assignedLegacyOwner = true;
+      return { ...avatar, userId: legacyOwnerUserId };
+    });
+    if (assignedLegacyOwner) persistStore();
 
     return [...memoryAvatars].sort((a, b) => b.createdAt - a.createdAt);
   },

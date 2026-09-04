@@ -19,7 +19,9 @@ export async function GET(req: NextRequest) {
     const access = await resolveAccessContext(req);
     if (access.isolated && !access.userId) return unauthorizedResponse();
 
-    const avatars = await AvatarStore.getAllAsync();
+    const avatars = await AvatarStore.getAllAsync(
+      access.isAdmin ? access.userId || undefined : undefined,
+    );
     const visibleAvatars = (canViewAllMedia(access)
       ? avatars
       : avatars.filter((avatar) => avatar.userId === access.userId)
