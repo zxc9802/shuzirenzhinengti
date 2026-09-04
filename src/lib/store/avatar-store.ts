@@ -26,9 +26,12 @@ const LEGACY_AVATARS_PATH = path.join(process.cwd(), ".avatars.json");
 const LEGACY_ROOT_BACKUP_AVATARS_PATH = path.join(process.cwd(), ".avatars.backup.json");
 const LEGACY_BACKUP_AVATARS_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".avatars.json");
 const COS_AVATARS_KEY = "_system/avatars.json";
+const LEGACY_AVATAR_PREFIX = "uploads/videos/";
+const LEGACY_AVATAR_VIDEO_KEY = /^uploads\/videos\/[^/]+\.(?:mp4|mov|webm|m4v)$/i;
 
 let memoryAvatars: AvatarItem[] = [];
 let hasLoadedFromCloud = false;
+let legacyReconciliationPromise: Promise<void> | null = null;
 
 function reloadFromDisk() {
   try {
@@ -90,6 +93,72 @@ function persistStore() {
   }
 }
 
+function legacyAvatarKeyFromUrl(source: string): string | null {
+  try {
+    const key = decodeURIComponent(new URL(source).pathname).replace(/^\/+/, "");
+    return LEGACY_AVATAR_VIDEO_KEY.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverLegacyAvatar(
+  file: { key: string; size: number; lastModified: string },
+  index: number,
+  ownerUserId: string,
+): Promise<AvatarItem> {
+  const fileName = path.basename(file.key);
+  const cleanName = fileName
+    .replace(/^\d+_/, "")
+    .replace(/\.[^/.]+$/, "")
+    .replace(/_/g, " ") || `形象素材 ${index + 1}`;
+  const thumbCandidates = [
+    `uploads/thumbnails/${fileName}.jpg`,
+    `uploads/thumbnails/${fileName.replace(/\.[^/.]+$/, "")}.jpg`,
+  ];
+  let thumbKey = "";
+  for (const candidate of thumbCandidates) {
+    if (await CosService.objectExists(candidate)) {
+      thumbKey = candidate;
+      break;
+    }
+  }
+
+  return {
+    id: `cos_recovered_${index}_${Date.now()}`,
+    userId: ownerUserId,
+    name: cleanName,
+    videoUrl: CosService.getPublicUrl(file.key),
+    coverUrl: thumbKey ? CosService.getPublicUrl(thumbKey) : undefined,
+    durationSeconds: 86,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    fileSize: file.size,
+    createdAt: file.lastModified ? new Date(file.lastModified).getTime() : Date.now(),
+    isCos: true,
+  };
+}
+
+async function reconcileLegacyAvatars(ownerUserId: string): Promise<void> {
+  const indexedKeys = new Set(
+    memoryAvatars
+      .map((avatar) => legacyAvatarKeyFromUrl(avatar.videoUrl))
+      .filter((key): key is string => Boolean(key)),
+  );
+  const files = await CosService.listFiles(LEGACY_AVATAR_PREFIX);
+  const missingFiles = files.filter(
+    (file) => LEGACY_AVATAR_VIDEO_KEY.test(file.key) && !indexedKeys.has(file.key),
+  );
+  if (missingFiles.length === 0) return;
+
+  const recovered = await Promise.all(
+    missingFiles.map((file, index) => recoverLegacyAvatar(file, index, ownerUserId)),
+  );
+  memoryAvatars = [...memoryAvatars, ...recovered];
+  persistStore();
+}
+
 reloadFromDisk();
 
 export const AvatarStore = {
@@ -102,59 +171,19 @@ export const AvatarStore = {
         const cloudAvatars = await CosService.getJsonFromCos<AvatarItem[]>(COS_AVATARS_KEY);
         if (cloudAvatars && Array.isArray(cloudAvatars) && cloudAvatars.length > 0) {
           memoryAvatars = cloudAvatars;
-          hasLoadedFromCloud = true;
           persistStore();
-        } else if (memoryAvatars.length === 0) {
-          // If no cloud JSON, scan existing videos in COS to auto-recover!
-          const files = await CosService.listFiles("uploads/videos/");
-          if (files.length > 0) {
-            const recovered: AvatarItem[] = await Promise.all(files.map(async (f, idx) => {
-              const url = CosService.getPublicUrl(f.key);
-              const fileName = path.basename(f.key);
-              const cleanName = fileName
-                .replace(/^\d+_/, "")
-                .replace(/\.[^/.]+$/, "")
-                .replace(/_/g, " ") || `形象素材 ${idx + 1}`;
-
-              const thumbCandidates = [
-                `uploads/thumbnails/${fileName}.jpg`,
-                `uploads/thumbnails/${fileName.replace(/\.[^/.]+$/, "")}.jpg`,
-              ];
-              let thumbKey = "";
-              for (const candidate of thumbCandidates) {
-                if (await CosService.objectExists(candidate)) {
-                  thumbKey = candidate;
-                  break;
-                }
-              }
-
-              return {
-                id: `cos_recovered_${idx}_${Date.now()}`,
-                userId: legacyOwnerUserId,
-                name: cleanName,
-                videoUrl: url,
-                coverUrl: thumbKey ? CosService.getPublicUrl(thumbKey) : undefined,
-                durationSeconds: 86,
-                width: 1080,
-                height: 1920,
-                fps: 30,
-                fileSize: f.size,
-                createdAt: f.lastModified ? new Date(f.lastModified).getTime() : Date.now(),
-                isCos: true,
-              };
-            }));
-
-            if (recovered.length > 0) {
-              memoryAvatars = recovered;
-              hasLoadedFromCloud = true;
-              persistStore();
-            }
-          }
-          hasLoadedFromCloud = true;
         }
+        hasLoadedFromCloud = true;
       } catch (err: any) {
         console.warn("Failed to load avatars from cloud:", err.message);
       }
+    }
+
+    if (legacyOwnerUserId && CosService.isConfigured()) {
+      legacyReconciliationPromise ||= reconcileLegacyAvatars(legacyOwnerUserId).catch((err: any) => {
+        console.warn("Failed to reconcile legacy avatars from cloud:", err.message);
+      });
+      await legacyReconciliationPromise;
     }
 
     let assignedLegacyOwner = false;
