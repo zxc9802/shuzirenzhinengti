@@ -92,9 +92,11 @@ test("only an authenticated admin can claim ownerless legacy COS avatars during 
   const avatarRoute = await read("src/app/api/avatars/route.ts");
 
   assert.match(avatarStore, /getAllAsync\(legacyOwnerUserId\?: string\)/);
-  assert.match(avatarStore, /avatar\.userId \|\| !legacyOwnerUserId/);
+  assert.match(avatarStore, /avatar\.userId \|\| avatar\.deletedAt \|\| !legacyOwnerUserId/);
   assert.match(avatarStore, /userId: legacyOwnerUserId/);
-  assert.match(avatarStore, /CosService\.objectExists/);
+  assert.match(avatarStore, /CosService\.getLegacyAvatarObjectKey/);
+  assert.match(avatarStore, /CosService\.copyLegacyAvatarObject/);
+  assert.match(avatarStore, /uploads\/users\/\$\{ownerKeyFor\(ownerUserId\)\}/);
   assert.match(
     avatarRoute,
     /AvatarStore\.getAllAsync\(\s*access\.isAdmin \? access\.userId \|\| undefined : undefined,?\s*\)/,

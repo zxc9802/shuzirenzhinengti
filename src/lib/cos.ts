@@ -123,6 +123,65 @@ export const CosService = {
     return isManagedMediaKey(key) ? key : null;
   },
 
+  getLegacyAvatarObjectKey(
+    source: string,
+    folder: "videos" | "thumbnails",
+  ): string | null {
+    const config = getAppConfig();
+    let url: URL;
+    try {
+      url = new URL(source);
+    } catch {
+      return null;
+    }
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      url.search ||
+      url.hash
+    ) return null;
+
+    const hosts = new Set<string>();
+    if (config.cosBucket && config.cosRegion) {
+      hosts.add(`${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com`.toLowerCase());
+    }
+    if (config.cosCustomDomain) {
+      try {
+        const custom = new URL(
+          config.cosCustomDomain.startsWith("http")
+            ? config.cosCustomDomain
+            : `https://${config.cosCustomDomain}`
+        );
+        hosts.add(custom.hostname.toLowerCase());
+      } catch {}
+    }
+    if (!hosts.has(url.hostname.toLowerCase())) return null;
+
+    let key: string;
+    try {
+      key = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    } catch {
+      return null;
+    }
+    const prefix = `uploads/${folder}/`;
+    if (!key.startsWith(prefix)) return null;
+    const fileName = key.slice(prefix.length);
+    if (
+      !fileName ||
+      fileName.includes("/") ||
+      fileName.includes("\\") ||
+      fileName.includes("..") ||
+      fileName.includes("%") ||
+      /[\u0000-\u001f\u007f]/.test(fileName)
+    ) return null;
+    const allowed = folder === "videos"
+      ? new Set([".mp4", ".mov", ".mkv", ".webm", ".m4v"])
+      : new Set([".jpg", ".jpeg", ".png", ".webp"]);
+    return allowed.has(path.extname(fileName).toLowerCase()) ? key : null;
+  },
+
   async getPresignedPutUrl(
     targetKey: string,
     options: { expires?: number; contentLength: number; contentType: string }
@@ -207,6 +266,80 @@ export const CosService = {
 
           resolve(this.getPublicUrl(cleanKey));
         }
+      );
+    });
+  },
+
+  async copyLegacyAvatarObject(sourceKey: string, targetKey: string): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) {
+      throw new Error("云端存储未配置");
+    }
+
+    const cleanSource = sourceKey.replace(/^\/+/, "");
+    const cleanTarget = targetKey.replace(/^\/+/, "");
+    for (const key of [cleanSource, cleanTarget]) {
+      if (
+        !key ||
+        key.includes("\\") ||
+        key.includes("..") ||
+        /[\u0000-\u001f\u007f]/.test(key)
+      ) throw new Error("云端对象路径无效");
+    }
+    const folder = cleanSource.startsWith("uploads/videos/")
+      ? "videos"
+      : cleanSource.startsWith("uploads/thumbnails/")
+        ? "thumbnails"
+        : null;
+    if (
+      !folder ||
+      this.getLegacyAvatarObjectKey(this.getPublicUrl(cleanSource), folder) !== cleanSource ||
+      !isManagedMediaKey(cleanTarget) ||
+      !cleanTarget.includes(`/${folder}/`) ||
+      path.extname(cleanTarget).toLowerCase() !== path.extname(cleanSource).toLowerCase()
+    ) throw new Error("云端对象迁移路径无效");
+    const encodedSource = cleanSource
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+
+    return new Promise((resolve, reject) => {
+      cos.sliceCopyFile(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanTarget,
+          CopySource: `${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com/${encodedSource}`,
+        },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+  },
+
+  async makeLegacyAvatarObjectPrivate(
+    sourceKey: string,
+    folder: "videos" | "thumbnails",
+  ): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) {
+      throw new Error("云端存储未配置");
+    }
+    const cleanKey = sourceKey.replace(/^\/+/, "");
+    if (
+      this.getLegacyAvatarObjectKey(this.getPublicUrl(cleanKey), folder) !== cleanKey
+    ) throw new Error("旧版形象对象路径无效");
+
+    return new Promise((resolve, reject) => {
+      cos.putObjectAcl(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+          ACL: "private",
+        },
+        (err) => (err ? reject(err) : resolve()),
       );
     });
   },

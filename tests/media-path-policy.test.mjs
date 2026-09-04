@@ -108,6 +108,52 @@ test("CosService.getManagedObjectKey only recognises the configured bucket host 
   }
 });
 
+test("legacy avatar key parsing is explicit, host-bound, flat and never broadens managed media", () => {
+  const config = getAppConfig();
+  const host = `${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com`;
+  const video = `https://${host}/uploads/videos/1700000000000_%E5%BD%A2%E8%B1%A1.mp4`;
+  const cover = `https://${host}/uploads/thumbnails/1700000000000_%E5%BD%A2%E8%B1%A1.mp4.jpg`;
+
+  assert.equal(
+    CosService.getLegacyAvatarObjectKey(video, "videos"),
+    "uploads/videos/1700000000000_形象.mp4",
+  );
+  assert.equal(
+    CosService.getLegacyAvatarObjectKey(cover, "thumbnails"),
+    "uploads/thumbnails/1700000000000_形象.mp4.jpg",
+  );
+  assert.equal(CosService.getManagedObjectKey(video), null);
+  assert.equal(CosService.getManagedObjectKey(cover), null);
+  assert.equal(
+    CosService.getLegacyAvatarObjectKey(`https://${host}/uploads/videos/a.m4v`, "videos"),
+    "uploads/videos/a.m4v",
+  );
+
+  for (const source of [
+    `http://${host}/uploads/videos/a.mp4`,
+    `https://user:pass@${host}/uploads/videos/a.mp4`,
+    `https://${host}:444/uploads/videos/a.mp4`,
+    `https://${host}/uploads/videos/a.mp4?download=1`,
+    `https://${host}/uploads/videos/a.mp4#fragment`,
+    `https://${host}/uploads/videos/nested/a.mp4`,
+    `https://${host}/uploads/videos/..%2Fsecret.mp4`,
+    `https://${host}/uploads/videos/a%5Cb.mp4`,
+    `https://${host}/uploads/videos/a%252Fb.mp4`,
+    `https://${host}/uploads/thumbnails/a.svg`,
+    `https://evil.example.test/uploads/videos/a.mp4`,
+    `https://${host}.evil.example.test/uploads/videos/a.mp4`,
+  ]) {
+    assert.equal(
+      CosService.getLegacyAvatarObjectKey(
+        source,
+        source.includes("thumbnails") ? "thumbnails" : "videos",
+      ),
+      null,
+      `必须拒绝: ${source}`,
+    );
+  }
+});
+
 test("ownerKeyFor uses a stable collision-resistant identifier rather than lossy character replacement", () => {
   assert.equal(upload.ownerKeyFor(undefined), "anonymous-local");
   assert.equal(upload.ownerKeyFor(null), "anonymous-local");
@@ -168,6 +214,7 @@ test("validateUploadDescriptor enforces per-folder size caps, extensions and MIM
   ok("videos", "clip.mp4", "video/mp4", 100 * MB);
   ok("videos", "clip.MOV", "video/quicktime", upload.MAX_UPLOAD_BYTES.videos);
   ok("videos", "clip.webm", undefined, 1);
+  ok("videos", "legacy.m4v", "video/x-m4v", 1);
   ok("voices", "voice.wav", "audio/wav", 10 * MB);
   ok("voices", "voice.mp4", "video/mp4", 10 * MB);
   ok("thumbnails", "cover.jpg", "image/jpeg", 1 * MB);

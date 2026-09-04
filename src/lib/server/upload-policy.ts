@@ -15,7 +15,7 @@ export const MAX_UPLOAD_BYTES: Record<UploadFolder, number> = {
 };
 
 const ALLOWED_EXTENSIONS: Record<UploadFolder, Set<string>> = {
-  videos: new Set([".mp4", ".mov", ".mkv", ".webm"]),
+  videos: new Set([".mp4", ".mov", ".mkv", ".webm", ".m4v"]),
   voices: new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".mov"]),
   thumbnails: new Set([".jpg", ".jpeg", ".png", ".webp"]),
 };
