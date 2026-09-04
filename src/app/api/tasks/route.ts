@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TaskStore } from "@/lib/store/task-store";
 import { runDigitalHumanPipeline } from "@/lib/engine/pipeline";
-import { getAppConfig } from "@/lib/config";
-import { isLipsyncProvider } from "@/lib/lipsync-provider";
+import { AvatarStore } from "@/lib/store/avatar-store";
+import { VoiceStore } from "@/lib/store/voice-store";
+import { resolvePrivateEngine, toPublicTask } from "@/lib/server/public-data";
 import type { MainAppUser } from "@/lib/main-app-sso";
 import {
   estimateTaskDuration,
@@ -14,7 +15,10 @@ import {
 import {
   resolveAccessContext,
   unauthorizedResponse,
+  canViewAllMedia,
 } from "@/lib/access-control";
+import { isOwnedUploadSource } from "@/lib/server/upload-policy";
+import { isTrustedStoredMediaSource } from "@/lib/server/media-response";
 
 export async function GET(req: NextRequest) {
   const access = await resolveAccessContext(req);
@@ -26,29 +30,25 @@ export async function GET(req: NextRequest) {
   const visibleTasks = access.isolated && !access.isAdmin
     ? tasks.filter((task) => task.userId === access.userId)
     : tasks;
-  return NextResponse.json({ tasks: visibleTasks });
+  return NextResponse.json({ tasks: visibleTasks.map(toPublicTask) });
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
-      videoName,
-      videoPath,
-      videoUrl,
+      avatarId,
       scriptText,
       toneProfile = "low",
       videoFit = "smart",
       emotionIntensity = 0.8,
       speakerVoiceId,
-      speakerAudioUrl,
-      emotionAudioUrl,
-      lipsyncProvider,
+      engine,
     } = body;
 
-    if ((!videoPath && !videoUrl) || !scriptText) {
+    if (!avatarId || !scriptText) {
       return NextResponse.json(
-        { error: "缺少视频文件或文本内容" },
+        { error: "缺少口播形象或文本内容" },
         { status: 400 }
       );
     }
@@ -60,12 +60,44 @@ export async function POST(req: NextRequest) {
     }
     const session = access.session;
     const user: Partial<MainAppUser> = session?.user || {
-      id: req.headers.get("x-user-id") || "local_user",
-      account: req.headers.get("x-user-account") || "local@qycm.top",
+      id: "local_user",
+      account: "local@qycm.top",
       nickname: "本地用户",
       role: "admin",
       billingAudience: "internal",
     };
+
+    const avatar = AvatarStore.get(String(avatarId));
+    if (
+      !avatar ||
+      (!canViewAllMedia(access) && avatar.userId !== access.userId)
+    ) {
+      return NextResponse.json({ error: "口播形象不存在" }, { status: 404 });
+    }
+
+    const selectedVoice = speakerVoiceId
+      ? VoiceStore.get(String(speakerVoiceId))
+      : VoiceStore.getDefault();
+    if (
+      !selectedVoice ||
+      (!selectedVoice.isDefault &&
+        !canViewAllMedia(access) &&
+        selectedVoice.userId !== access.userId)
+    ) {
+      return NextResponse.json({ error: "音色不存在" }, { status: 404 });
+    }
+
+    const avatarSource = avatar.videoPath || avatar.videoUrl;
+    if (!isOwnedUploadSource({ source: avatarSource, userId: avatar.userId, folder: "videos" })) {
+      return NextResponse.json({ error: "口播形象素材无效，请重新上传" }, { status: 400 });
+    }
+    const voiceSource = selectedVoice.audioPath || selectedVoice.audioUrl;
+    const voiceIsTrusted = selectedVoice.isDefault
+      ? await isTrustedStoredMediaSource(voiceSource, true)
+      : isOwnedUploadSource({ source: voiceSource, userId: selectedVoice.userId, folder: "voices" });
+    if (!voiceIsTrusted) {
+      return NextResponse.json({ error: "音色素材无效，请重新上传" }, { status: 400 });
+    }
 
     // 2. Estimate Task Duration and Reserve Credits (200 points/s for external users)
     const estimatedDuration = estimateTaskDuration({ scriptText });
@@ -93,19 +125,17 @@ export async function POST(req: NextRequest) {
         status: reservation.chargeRequired ? "reserved" : "not_applicable",
       },
       inputs: {
-        videoName: videoName || "input.mp4",
-        videoPath,
-        videoUrl: videoUrl || "",
+        avatarId: avatar.id,
+        videoName: avatar.name || "口播素材.mp4",
+        videoPath: avatar.videoPath || "",
+        videoUrl: avatar.videoUrl,
         scriptText,
         toneProfile,
         videoFit,
         emotionIntensity,
-        speakerVoiceId,
-        speakerAudioUrl,
-        emotionAudioUrl,
-        lipsyncProvider: isLipsyncProvider(lipsyncProvider)
-          ? lipsyncProvider
-          : getAppConfig().lipsyncProvider || "heygen",
+        speakerVoiceId: selectedVoice.id,
+        speakerAudioUrl: voiceSource,
+        lipsyncProvider: resolvePrivateEngine(engine),
       },
       results: {},
     });
@@ -115,7 +145,7 @@ export async function POST(req: NextRequest) {
       console.error(`Task ${task.id} pipeline crashed:`, err);
     });
 
-    return NextResponse.json({ success: true, task });
+    return NextResponse.json({ success: true, task: toPublicTask(task) });
   } catch (err: any) {
     if (err instanceof MainAppBillingError) {
       return NextResponse.json(
@@ -124,9 +154,8 @@ export async function POST(req: NextRequest) {
       );
     }
     return NextResponse.json(
-      { error: err.message || "Failed to create task" },
+      { error: "创建任务失败，请稍后重试" },
       { status: 500 }
     );
   }
 }
-

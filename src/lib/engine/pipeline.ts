@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { TaskStore, TaskItem, TaskStep } from "../store/task-store";
 import { getAppConfig } from "../config";
 import { generateIndexTTS } from "./indextts";
@@ -13,7 +14,12 @@ import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { CosService } from "../cos";
-import { lipsyncModeName, lipsyncModelName, resolveLipsyncProvider } from "../lipsync-provider";
+import { resolveLipsyncProvider } from "../lipsync-provider";
+import { resolveAllowedLocalMediaPath } from "../media-path-policy";
+import {
+  downloadTrustedMediaToFile,
+  getTrustedExternalMediaUrl,
+} from "../server/media-response";
 import {
   calculateRequiredPoints,
   calculateCostCny,
@@ -30,16 +36,65 @@ export async function runDigitalHumanPipeline(
   if (!task) return;
 
   const config = getAppConfig();
-  const jobDir = path.join(process.cwd(), "public", "jobs", taskId);
+  const providerRoot = path.join(process.cwd(), ".runtime", "provider-input");
+  fs.mkdirSync(providerRoot, { recursive: true });
+  for (const entry of fs.readdirSync(providerRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^[a-f0-9]{48}$/.test(entry.name)) continue;
+    const candidate = path.join(providerRoot, entry.name);
+    try {
+      if (Date.now() - fs.statSync(candidate).mtimeMs > 6 * 60 * 60 * 1000) {
+        fs.rmSync(candidate, { recursive: true, force: true });
+      }
+    } catch {}
+  }
+  if (CosService.isConfigured()) {
+    await CosService.cleanupExpiredObjects("provider-input/", 24 * 60 * 60 * 1000).catch(() => 0);
+  }
+  const jobDir = path.join(config.storageDir, taskId);
   fs.mkdirSync(jobDir, { recursive: true });
+  const providerToken = crypto.randomBytes(24).toString("hex");
+  const providerInputDir = path.join(providerRoot, providerToken);
+  fs.mkdirSync(providerInputDir, { recursive: true });
+  const providerCosKeys: string[] = [];
+  const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
+
+  const externalizeReference = async (
+    source: string,
+    fileName: string,
+    allowConfiguredReference = false
+  ): Promise<string> => {
+    try {
+      return await getTrustedExternalMediaUrl(source, allowConfiguredReference);
+    } catch {
+      const localPath = resolveAllowedLocalMediaPath(source);
+      if (!localPath || !fs.existsSync(localPath) || !fs.statSync(localPath).isFile()) {
+        throw new Error("媒体引用不在允许范围内");
+      }
+      const targetPath = path.join(providerInputDir, fileName);
+      fs.copyFileSync(localPath, targetPath);
+      return `${baseUrl}/jobs/input/${providerToken}/${fileName}`;
+    }
+  };
 
   const log = (msg: string, level: "info" | "warn" | "error" | "success" = "info") => {
     TaskStore.addLog(taskId, msg, level);
+  };
+  const ensureTaskActive = () => {
+    if (TaskStore.isDeleted(taskId)) throw new Error("任务已删除");
+  };
+  const markProviderCommitted = () => {
+    const current = TaskStore.get(taskId);
+    if (current?.billing?.isExternalUser && current.billing.status === "reserved") {
+      TaskStore.update(taskId, {
+        billing: { ...current.billing, status: "provider_committed" },
+      });
+    }
   };
 
   let currentStep: TaskStep = "tts";
 
   try {
+    ensureTaskActive();
     currentStep = "tts";
     TaskStore.update(taskId, {
       status: "processing",
@@ -59,6 +114,9 @@ export async function runDigitalHumanPipeline(
 
     // 0. Ensure source video exists locally (auto-download from videoUrl / COS if missing from local disk)
     let localVideoPath = task.inputs.videoPath;
+    if (localVideoPath) {
+      localVideoPath = resolveAllowedLocalMediaPath(localVideoPath) || "";
+    }
     const needDownload = !localVideoPath || !fs.existsSync(localVideoPath);
 
     if (needDownload) {
@@ -67,24 +125,18 @@ export async function runDigitalHumanPipeline(
         throw new Error(`未找到可用视频文件，本地路径不存在且无云端直链: ${localVideoPath || "空"}`);
       }
       log(`⬇️ 正在从云端存储同步视频素材至当前实例...`);
-      const downloadsDir = path.join(process.cwd(), "public", "uploads", "videos");
-      fs.mkdirSync(downloadsDir, { recursive: true });
-      const targetFileName = localVideoPath ? path.basename(localVideoPath) : `${Date.now()}_source.mp4`;
-      localVideoPath = path.join(downloadsDir, targetFileName);
-
-      // Download file to localVideoPath
-      const resp = await fetch(sourceUrl);
-      if (!resp.ok) {
-        throw new Error(`从云端下载视频素材失败 (HTTP ${resp.status}): ${sourceUrl}`);
-      }
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      fs.writeFileSync(localVideoPath, buffer);
-      log(`✅ 视频素材已成功同步至本地 (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`, "success");
+      localVideoPath = path.join(jobDir, "input-video.mp4");
+      const bytes = await downloadTrustedMediaToFile({
+        source: sourceUrl,
+        outputPath: localVideoPath,
+      });
+      log(`✅ 视频素材已成功同步至本地 (${(bytes / 1024 / 1024).toFixed(2)} MB)`, "success");
     }
 
     // 1. Probe source video
     log("📹 正在探测原始口播视频参数...");
     const originalProbe = await probeMedia(localVideoPath);
+    ensureTaskActive();
     log(
       `原始视频信息: 分辨率 ${originalProbe.width}x${originalProbe.height} | 时长 ${originalProbe.durationSeconds.toFixed(
         2
@@ -93,14 +145,25 @@ export async function runDigitalHumanPipeline(
 
     // 2. Step: Speech Synthesis
     log("🗣️ 第一步: 正在合成定制原声配音 (根据字数可能需要 1~3 分钟)...");
-    const speakerUrl =
+    const storedSpeakerSource =
       task.inputs.speakerAudioUrl ||
-      config.indexttsSpeakerAudioUrl ||
-      "https://file.302.ai/gpt/imgs/20260819/9312a23901fa7f214037fa88513a64b3.mp3";
-    const emotionAudioUrl =
+      config.indexttsSpeakerAudioUrl;
+    const storedEmotionSource =
       task.inputs.emotionAudioUrl ||
-      config.indexttsEmotionAudioUrl ||
-      "https://file.302.ai/gpt/imgs/20260820/d9b8f707580993f36fe037e7e9540938.wav";
+      config.indexttsEmotionAudioUrl;
+    const speakerExt = path.extname(new URL(storedSpeakerSource, "file:///").pathname).toLowerCase();
+    const speakerUrl = await externalizeReference(
+      storedSpeakerSource,
+      `speaker-reference${[".mp3", ".wav", ".m4a"].includes(speakerExt) ? speakerExt : ".mp3"}`,
+      storedSpeakerSource === config.indexttsSpeakerAudioUrl
+    );
+    const emotionAudioUrl = storedEmotionSource
+      ? await externalizeReference(
+          storedEmotionSource,
+          "emotion-reference.wav",
+          storedEmotionSource === config.indexttsEmotionAudioUrl
+        )
+      : "";
 
     const ttsResult = await generateIndexTTS(task.inputs.scriptText, {
       apiKey: config.indexttsApiKey,
@@ -111,7 +174,9 @@ export async function runDigitalHumanPipeline(
       toneProfile: task.inputs.toneProfile,
       outDir: jobDir,
       onLog: (m) => log(`[TTS] ${m}`),
+      cacheScope: `${task.userId || "local"}:${task.inputs.speakerVoiceId || "default"}`,
     });
+    ensureTaskActive();
 
     const sha256Audio = await sha256File(ttsResult.finalWavPath);
     log(
@@ -127,13 +192,14 @@ export async function runDigitalHumanPipeline(
     });
     log("🎞️ 第二步: 正在进行 FFmpeg 画面归一化与音画对齐...");
 
-    const preparedVideoPath = path.join(jobDir, "heygen-source-video.mp4");
+    const preparedVideoPath = path.join(jobDir, "source-video.mp4");
     const prepResult = await prepareSourceVideo(
       localVideoPath,
       ttsResult.selectedDuration,
       preparedVideoPath,
       task.inputs.videoFit
     );
+    ensureTaskActive();
 
     const sha256Video = await sha256File(preparedVideoPath);
     log(
@@ -161,23 +227,26 @@ export async function runDigitalHumanPipeline(
       8
     )}`;
 
-    // Prepare public URLs for media
-    const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-    let publicVideoUrl = `${baseUrl}/jobs/${taskId}/heygen-source-video.mp4`;
-    let publicAudioUrl = `${baseUrl}/jobs/${taskId}/exact-final-indextts.wav`;
+    // Create short-lived, unguessable provider inputs. They are removed in finally.
+    fs.copyFileSync(preparedVideoPath, path.join(providerInputDir, "source-video.mp4"));
+    fs.copyFileSync(ttsResult.finalWavPath, path.join(providerInputDir, "voice-track.wav"));
+    let publicVideoUrl = `${baseUrl}/jobs/input/${providerToken}/source-video.mp4`;
+    let publicAudioUrl = `${baseUrl}/jobs/input/${providerToken}/voice-track.wav`;
 
     // If cloud object storage is configured, upload prepared video & audio to COS for 100% reachable public access
     if (CosService.isConfigured()) {
       try {
+        ensureTaskActive();
         log("☁️ 正在将预处理音画直链同步至云端高速分发...", "info");
-        publicVideoUrl = await CosService.uploadFile(
-          preparedVideoPath,
-          `jobs/${taskId}/heygen-source-video.mp4`
-        );
-        publicAudioUrl = await CosService.uploadFile(
-          ttsResult.finalWavPath,
-          `jobs/${taskId}/exact-final-indextts.wav`
-        );
+        const providerVideoKey = `provider-input/${providerToken}/source-video.mp4`;
+        const providerAudioKey = `provider-input/${providerToken}/voice-track.wav`;
+        await CosService.uploadFile(preparedVideoPath, providerVideoKey);
+        providerCosKeys.push(providerVideoKey);
+        await CosService.uploadFile(ttsResult.finalWavPath, providerAudioKey);
+        providerCosKeys.push(providerAudioKey);
+        publicVideoUrl = await CosService.getDownloadUrl(providerVideoKey, undefined, 6 * 60 * 60);
+        publicAudioUrl = await CosService.getDownloadUrl(providerAudioKey, undefined, 6 * 60 * 60);
+        ensureTaskActive();
         log("✅ 预处理音视频直链已就绪 (云端存储)", "success");
       } catch (cosErr: any) {
         console.warn("COS sync for inputs failed, fallback to baseUrl:", cosErr.message);
@@ -213,7 +282,9 @@ export async function runDigitalHumanPipeline(
           audioUrl: publicAudioUrl,
           existingChunks: TaskStore.get(taskId)?.results.lipsyncChunks,
           onLog: (m) => log(m),
+          onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId, creditsUsed }) => {
+            markProviderCommitted();
             TaskStore.update(taskId, {
               results: {
                 heygenLipsyncId: lipsyncId,
@@ -228,7 +299,7 @@ export async function runDigitalHumanPipeline(
                 heygenLipsyncId: lipsyncId,
                 lipsyncProvider: "pixverse",
                 lipsyncCredits: creditsUsed,
-                pixverseResultUrl: downloadUrl,
+                heygenResultUrl: downloadUrl,
               },
             });
           },
@@ -266,7 +337,9 @@ export async function runDigitalHumanPipeline(
           audioUrl: publicAudioUrl,
           objectKeyPrefix: `jobs/${taskId}`,
           onLog: (m) => log(m),
+          onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId }) => {
+            markProviderCommitted();
             TaskStore.update(taskId, {
               results: {
                 heygenLipsyncId: lipsyncId,
@@ -302,9 +375,29 @@ export async function runDigitalHumanPipeline(
           audioUrl: publicAudioUrl,
           submissionTitle,
           onLog: (m) => log(m),
+          onProviderAccepted: markProviderCommitted,
+          onJobCreated: ({ lipsyncId }) => {
+            markProviderCommitted();
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "heygen",
+              },
+            });
+          },
+          onResultReady: ({ lipsyncId, downloadUrl }) => {
+            TaskStore.update(taskId, {
+              results: {
+                heygenLipsyncId: lipsyncId,
+                lipsyncProvider: "heygen",
+                pixverseResultUrl: downloadUrl,
+              },
+            });
+          },
         },
         jobDir
       );
+      markProviderCommitted();
     }
 
     // 5. Step: Finalize and Remux with exact audio
@@ -315,7 +408,7 @@ export async function runDigitalHumanPipeline(
     });
     log("🎧 第五步: 正在将生成的对口型视频与原声 WAV 音轨无损混流封装...");
 
-    const heygenDownloadedPath = path.join(jobDir, "heygen-result-raw.mp4");
+    const heygenDownloadedPath = path.join(jobDir, "rendered-source.mp4");
     const finalVideoPath = path.join(jobDir, "final.mp4");
 
     const finalProbe = await finalizeVideo(
@@ -323,8 +416,9 @@ export async function runDigitalHumanPipeline(
       ttsResult.finalWavPath,
       finalVideoPath
     );
+    ensureTaskActive();
 
-    // 6. Generate evidence.json
+    // 6. Generate an implementation-neutral production report
     const evidencePayload = {
       task_id: taskId,
       created_at: new Date().toISOString(),
@@ -349,21 +443,10 @@ export async function runDigitalHumanPipeline(
           sha256: sha256Audio,
         },
       },
-      lipsync: {
-        provider: lipsyncProvider,
-        lipsync_id: heygenResult.lipsyncId,
-        submission_title: submissionTitle,
-        model: lipsyncModelName(lipsyncProvider),
-        credits: heygenResult.creditsUsed,
-      },
-      heygen: {
-        lipsync_id: heygenResult.lipsyncId,
-        submission_title: submissionTitle,
-        mode: lipsyncModeName(lipsyncProvider),
-      },
+      processing: { status: "completed" },
     };
 
-    const evidencePath = path.join(jobDir, "evidence.json");
+    const evidencePath = path.join(jobDir, "production-report.json");
     fs.writeFileSync(
       evidencePath,
       JSON.stringify(evidencePayload, null, 2),
@@ -371,26 +454,9 @@ export async function runDigitalHumanPipeline(
     );
 
     // Upload final video, audio, evidence to cloud object storage if configured
-    let finalVideoUrl = `/jobs/${taskId}/final.mp4`;
-    let exactAudioUrl = `/jobs/${taskId}/exact-final-indextts.wav`;
-    let evidenceJsonUrl = `/jobs/${taskId}/evidence.json`;
-
-    if (CosService.isConfigured()) {
-      try {
-        log("☁️ 正在将合成的数字人成片上传至云端永久存储...", "info");
-        const cosVideoKey = `jobs/${taskId}/final.mp4`;
-        finalVideoUrl = await CosService.uploadFile(finalVideoPath, cosVideoKey);
-        log(`✅ 成片已成功存储至云端存储: ${finalVideoUrl}`, "success");
-
-        const cosAudioKey = `jobs/${taskId}/exact-final-indextts.wav`;
-        exactAudioUrl = await CosService.uploadFile(ttsResult.finalWavPath, cosAudioKey);
-
-        const cosEvidenceKey = `jobs/${taskId}/evidence.json`;
-        evidenceJsonUrl = await CosService.uploadFile(evidencePath, cosEvidenceKey);
-      } catch (cosErr: any) {
-        log(`⚠️ 云端存储上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
-      }
-    }
+    let finalVideoUrl = finalVideoPath;
+    let exactAudioUrl = ttsResult.finalWavPath;
+    let evidenceJsonUrl = evidencePath;
 
     // 7. Settle main-site billing credits for external users (200 points/sec = 0.20 CNY/sec)
     let chargedPoints: number | undefined;
@@ -398,10 +464,10 @@ export async function runDigitalHumanPipeline(
     let pointsBalanceAfter: number | undefined;
 
     const currentTaskData = TaskStore.get(taskId) || task;
-    if (
-      currentTaskData.billing?.isExternalUser &&
-      currentTaskData.billing.requestId
-    ) {
+    if (currentTaskData.billing?.isExternalUser) {
+      if (!currentTaskData.billing.requestId || !currentTaskData.userId) {
+        throw new Error("外部用户任务缺少主站积分结算标识");
+      }
       const actualDuration = finalProbe.durationSeconds;
       chargedPoints = calculateRequiredPoints(actualDuration);
       costCny = calculateCostCny(actualDuration);
@@ -409,28 +475,48 @@ export async function runDigitalHumanPipeline(
         `💳 正在结算主站积分消耗: 实际时长 ${actualDuration.toFixed(1)}s × ${POINTS_PER_SECOND}积分/秒 = ${chargedPoints} 积分 (¥${costCny})...`,
         "info"
       );
+      TaskStore.update(taskId, {
+        billing: { ...currentTaskData.billing, status: "settle_pending" },
+      });
+      const settleResult = await settleMainAppCredits({
+        userId: currentTaskData.userId,
+        requestId: currentTaskData.billing.requestId,
+        actualDuration,
+        chargedPoints,
+        sessionToken,
+      });
+      pointsBalanceAfter = settleResult.pointsBalance;
+      log(
+        `✅ 主站积分结算成功：扣除 ${chargedPoints} 积分 (¥${costCny})，当前账户剩余: ${
+          pointsBalanceAfter !== undefined ? `${pointsBalanceAfter} 积分` : "正常"
+        }`,
+        "success"
+      );
+    }
+
+    // Persist deliverables only after the authoritative ledger acknowledges settlement.
+    if (CosService.isConfigured()) {
       try {
-        const settleResult = await settleMainAppCredits({
-          userId: currentTaskData.userId || "",
-          requestId: currentTaskData.billing.requestId,
-          actualDuration,
-          chargedPoints,
-          sessionToken,
-        });
-        pointsBalanceAfter = settleResult.pointsBalance;
-        log(
-          `✅ 主站积分结算成功：扣除 ${chargedPoints} 积分 (¥${costCny})，当前账户剩余: ${
-            pointsBalanceAfter !== undefined ? `${pointsBalanceAfter} 积分` : "正常"
-          }`,
-          "success"
-        );
-      } catch (settleErr: any) {
-        log(`⚠️ 积分结算通知警告: ${settleErr.message}`, "warn");
+        ensureTaskActive();
+        log("☁️ 正在将合成的数字人成片上传至云端永久存储...", "info");
+        const cosVideoKey = `jobs/${taskId}/final.mp4`;
+        finalVideoUrl = await CosService.uploadFile(finalVideoPath, cosVideoKey);
+        log(`✅ 成片已成功存储至云端存储: ${finalVideoUrl}`, "success");
+
+        const cosAudioKey = `jobs/${taskId}/voice-track.wav`;
+        exactAudioUrl = await CosService.uploadFile(ttsResult.finalWavPath, cosAudioKey);
+
+        const cosEvidenceKey = `jobs/${taskId}/production-report.json`;
+        evidenceJsonUrl = await CosService.uploadFile(evidencePath, cosEvidenceKey);
+        ensureTaskActive();
+      } catch (cosErr: any) {
+        log(`⚠️ 云端存储上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
       }
     }
 
     // Done!
     currentStep = "done";
+    ensureTaskActive();
     TaskStore.update(taskId, {
       status: "completed",
       step: "done",
@@ -442,13 +528,15 @@ export async function runDigitalHumanPipeline(
             chargedPoints,
             costCny,
             pointsBalanceAfter,
-            status: "settled",
+            status: currentTaskData.billing.isExternalUser
+              ? "settled"
+              : "not_applicable",
           }
         : undefined,
       results: {
         originalVideoUrl:
           task.inputs.videoUrl ||
-          `/jobs/${taskId}/${path.basename(task.inputs.videoPath)}`,
+          task.inputs.videoPath,
         finalVideoUrl,
         exactAudioUrl,
         evidenceJsonUrl,
@@ -503,5 +591,23 @@ export async function runDigitalHumanPipeline(
       failedStep: currentStep,
       error: errorMsg,
     });
+  } finally {
+    try {
+      fs.rmSync(providerInputDir, { recursive: true, force: true });
+    } catch {}
+    await Promise.all(
+      providerCosKeys.map((key) => CosService.deleteObject(key).catch(() => undefined))
+    );
+    if (TaskStore.isDeleted(taskId)) {
+      try {
+        fs.rmSync(jobDir, { recursive: true, force: true });
+      } catch {}
+      if (CosService.isConfigured()) {
+        const files = await CosService.listFiles(`jobs/${taskId}/`).catch(() => []);
+        await Promise.all(
+          files.map((file) => CosService.deleteObject(file.key).catch(() => undefined))
+        );
+      }
+    }
   }
 }

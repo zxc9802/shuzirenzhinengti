@@ -60,7 +60,7 @@ test("avatar APIs enforce visibility and ownership", async () => {
   assert.match(libraryRoute, /userId: access\.userId/);
 
   const uploadRoute = await read("src/app/api/upload/route.ts");
-  assert.match(uploadRoute, /userId: access\.userId/);
+  assert.match(uploadRoute, /ownerKeyFor\(access\.userId\)/);
 
   const coverRoute = await read("src/app/api/avatars/extract-cover/route.ts");
   assert.match(coverRoute, /canManageMediaItem\(access, avatar\)/);
@@ -82,8 +82,7 @@ test("new object-storage keys are namespaced by user", async () => {
   const uploadRoute = await read("src/app/api/upload/route.ts");
   const voiceRoute = await read("src/app/api/voices/route.ts");
 
-  assert.match(presignRoute, /uploads\/users\/\$\{ownerKey\}/);
-  assert.match(presignRoute, /ALLOWED_UPLOAD_FOLDERS/);
-  assert.match(uploadRoute, /uploads["\),]+\s*"users"/);
-  assert.match(voiceRoute, /uploads["\),]+\s*"users"/);
+  assert.match(presignRoute, /status: 404/);
+  assert.match(uploadRoute, /uploads\/users\/\$\{ownerKeyFor\(access\.userId\)\}/);
+  assert.match(voiceRoute, /uploads\/users\/\$\{ownerKeyFor\(access\.userId\)\}/);
 });

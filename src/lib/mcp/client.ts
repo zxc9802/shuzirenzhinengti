@@ -80,6 +80,7 @@ export class McpClientManager {
       command?: string;
       args?: string[];
       env?: Record<string, string>;
+      authToken?: string;
     }
   ): Promise<McpConnectionStatus> {
     await this.disconnect();
@@ -153,7 +154,17 @@ export class McpClientManager {
 
       if (config.transport === "sse") {
         if (!config.serverUrl) throw new Error("SSE Server URL is required");
-        this.transport = new SSEClientTransport(new URL(config.serverUrl));
+        if (!config.authToken) throw new Error("MCP SSE auth token is required");
+        const authorization = `Bearer ${config.authToken}`;
+        const authenticatedFetch = (input: string | URL | Request, init?: RequestInit) => {
+          const headers = new Headers(init?.headers);
+          headers.set("Authorization", authorization);
+          return fetch(input, { ...init, headers });
+        };
+        this.transport = new SSEClientTransport(new URL(config.serverUrl), {
+          eventSourceInit: { fetch: authenticatedFetch },
+          requestInit: { headers: { Authorization: authorization } },
+        });
       } else if (config.transport === "stdio") {
         if (!config.command) throw new Error("Stdio command is required");
         this.transport = new StdioClientTransport({

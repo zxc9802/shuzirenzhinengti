@@ -15,13 +15,13 @@ import {
   RefreshCw,
   AlertCircle,
 } from "lucide-react";
-import { VoiceItem } from "@/lib/store/voice-store";
+import type { PublicVoiceItem } from "@/lib/public-contract";
 import { cn } from "@/lib/utils";
-import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
+import { uploadMediaFile } from "@/lib/client-media-upload";
 
 interface VoiceSelectorProps {
   selectedVoiceId?: string;
-  onSelectVoice: (voice: VoiceItem) => void;
+  onSelectVoice: (voice: PublicVoiceItem) => void;
   disabled?: boolean;
 }
 
@@ -30,7 +30,7 @@ export default function VoiceSelector({
   onSelectVoice,
   disabled = false,
 }: VoiceSelectorProps) {
-  const [voices, setVoices] = useState<VoiceItem[]>([]);
+  const [voices, setVoices] = useState<PublicVoiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -39,8 +39,6 @@ export default function VoiceSelector({
   const [voiceName, setVoiceName] = useState("");
   const [voiceDesc, setVoiceDesc] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [customAudioUrl, setCustomAudioUrl] = useState("");
-  const [inputMode, setInputMode] = useState<"file" | "url">("file");
   const [uploading, setUploading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -64,7 +62,7 @@ export default function VoiceSelector({
       if (data.voices) {
         setVoices(data.voices);
         if (!selectedVoiceId && data.voices.length > 0) {
-          const defaultVoice = data.voices.find((v: VoiceItem) => v.isDefault) || data.voices[0];
+          const defaultVoice = data.voices.find((v: PublicVoiceItem) => v.isDefault) || data.voices[0];
           onSelectVoice(defaultVoice);
         }
       }
@@ -79,7 +77,7 @@ export default function VoiceSelector({
     fetchVoices();
   }, []);
 
-  const handlePlayVoice = (voice: VoiceItem, e: React.MouseEvent) => {
+  const handlePlayVoice = (voice: PublicVoiceItem, e: React.MouseEvent) => {
     e.stopPropagation();
     if (playingAudioId === voice.id) {
       audioPlayerRef.current?.pause();
@@ -106,60 +104,37 @@ export default function VoiceSelector({
     setModalError(null);
 
     try {
-      if (inputMode === "file") {
-        if (!audioFile) {
-          throw new Error("请上传 5~15 秒干净人声音频文件 (MP3/WAV/M4A/MP4)");
-        }
-
-        // 1. Direct upload to cloud object storage
-        const uploadResult = await uploadFileDirectToCos(
-          audioFile,
-          audioFile.name,
-          "voices"
-        );
-
-        // 2. Register to VoiceStore
-        const resp = await fetch("/api/voices", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: voiceName.trim(),
-            description: voiceDesc.trim() || "用户自定义录制原声",
-            audioUrl: uploadResult.fileUrl,
-          }),
-        });
-
-        const data = await resp.json();
-        if (!data.success) throw new Error(data.error || "上传失败");
-
-        setVoices((prev) => [data.voice, ...prev]);
-        onSelectVoice(data.voice);
-      } else {
-        if (!customAudioUrl.trim()) {
-          throw new Error("请输入音频文件的公网直链 URL");
-        }
-        const resp = await fetch("/api/voices", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: voiceName.trim(),
-            description: voiceDesc.trim() || "自定义音频直链",
-            audioUrl: customAudioUrl.trim(),
-          }),
-        });
-        const data = await resp.json();
-        if (!data.success) throw new Error(data.error || "添加失败");
-
-        setVoices((prev) => [data.voice, ...prev]);
-        onSelectVoice(data.voice);
+      if (!audioFile) {
+        throw new Error("请上传 5~15 秒干净人声音频文件 (MP3/WAV/M4A/MP4)");
       }
+
+      const uploadResult = await uploadMediaFile(
+        audioFile,
+        audioFile.name,
+        "voices"
+      );
+
+      const resp = await fetch("/api/voices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: voiceName.trim(),
+          description: voiceDesc.trim() || "用户自定义录制原声",
+          uploadKey: uploadResult.uploadKey,
+        }),
+      });
+
+      const data = await resp.json();
+      if (!data.success) throw new Error(data.error || "上传失败");
+
+      setVoices((prev) => [data.voice, ...prev]);
+      onSelectVoice(data.voice);
 
       // Reset modal
       setIsModalOpen(false);
       setVoiceName("");
       setVoiceDesc("");
       setAudioFile(null);
-      setCustomAudioUrl("");
     } catch (err: any) {
       setModalError(err.message || "创建音色失败");
     } finally {
@@ -326,36 +301,7 @@ export default function VoiceSelector({
                 />
               </div>
 
-              {/* Upload Mode Selector */}
-              <div className="flex items-center gap-2 border-b border-white/[0.06] pb-2">
-                <button
-                  type="button"
-                  onClick={() => setInputMode("file")}
-                  className={cn(
-                    "text-xs font-semibold pb-1 border-b-2 transition-colors",
-                    inputMode === "file"
-                      ? "border-blue-500 text-blue-300"
-                      : "border-transparent text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  本地音频/视频文件上传
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInputMode("url")}
-                  className={cn(
-                    "text-xs font-semibold pb-1 border-b-2 transition-colors",
-                    inputMode === "url"
-                      ? "border-blue-500 text-blue-300"
-                      : "border-transparent text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  远程音频 URL 直链
-                </button>
-              </div>
-
-              {inputMode === "file" ? (
-                <div>
+              <div>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -416,21 +362,7 @@ export default function VoiceSelector({
                       </div>
                     )}
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-300">
-                    音频公网 URL (HTTP/HTTPS)
-                  </label>
-                  <input
-                    type="text"
-                    value={customAudioUrl}
-                    onChange={(e) => setCustomAudioUrl(e.target.value)}
-                    placeholder="https://your-domain.com/speaker.wav"
-                    className="w-full rounded-xl border border-white/[0.08] bg-black/40 p-3 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              )}
+              </div>
 
               {/* Description */}
               <div className="space-y-1.5">

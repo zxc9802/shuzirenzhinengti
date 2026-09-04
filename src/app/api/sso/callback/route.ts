@@ -1,20 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createMainAppSessionCookie,
+  createMainAppSsoIntent,
   exchangeMainAppSsoTicket,
+  getMainAppSsoIntentCookieName,
+  getMainAppSsoIntentCookieOptions,
   getMainAppSsoLaunchUrl,
   getMainAppSessionCookieName,
   getMainAppSessionCookieOptions,
   getPublicShuzirenAppUrl,
+  validateMainAppSsoIntent,
 } from "@/lib/main-app-sso";
 
 export async function GET(request: NextRequest) {
   const ticket = request.nextUrl.searchParams.get("ticket")?.trim();
-  if (!ticket) {
-    return NextResponse.json({ error: "SSO ticket is required." }, { status: 400 });
-  }
+  const state = request.nextUrl.searchParams.get("state")?.trim();
+  const intentCookie = request.cookies.get(getMainAppSsoIntentCookieName())?.value;
 
   try {
+    if (!ticket || !(await validateMainAppSsoIntent(intentCookie, state))) {
+      throw new Error("SSO login intent is missing, expired, or invalid.");
+    }
     const { redirectPath, session } = await exchangeMainAppSsoTicket(ticket);
     const redirectUrl = new URL(redirectPath, getPublicShuzirenAppUrl());
     const response = NextResponse.redirect(redirectUrl);
@@ -25,11 +31,16 @@ export async function GET(request: NextRequest) {
       getMainAppSessionCookieOptions(session.expiresAt),
     );
     response.headers.set("Cache-Control", "private, no-store");
+    response.cookies.set(getMainAppSsoIntentCookieName(), "", {
+      ...getMainAppSsoIntentCookieOptions(),
+      maxAge: 0,
+    });
     return response;
   } catch (error: any) {
     // 友好错误页：说明原因并允许重试，避免用户看到裸 JSON 或误判为登录循环
-    const reason = error?.message || "Unknown error";
+    const reason = "登录请求已失效，请从主站重新进入。";
     const isTimeout = error?.name === "TimeoutError";
+    const retryIntent = await createMainAppSsoIntent();
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -49,16 +60,22 @@ export async function GET(request: NextRequest) {
     <h1>数字人智能体登录失败</h1>
     <p>${isTimeout ? "连接主站超时：数字人服务器访问主站网络异常，请稍后重试或联系管理员检查服务器出网。" : "单点登录票据校验未通过，票据是一次性的，返回主站重新进入即可。"}</p>
     <code>${reason.replace(/[<>&]/g, "")}</code>
-    <a class="btn" href="${getMainAppSsoLaunchUrl()}">返回主站重新进入</a>
+    <a class="btn" href="${getMainAppSsoLaunchUrl(retryIntent.state)}">返回主站重新进入</a>
   </div>
 </body>
 </html>`;
-    return new NextResponse(html, {
+    const response = new NextResponse(html, {
       status: 401,
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "private, no-store",
       },
     });
+    response.cookies.set(
+      getMainAppSsoIntentCookieName(),
+      retryIntent.cookieValue,
+      getMainAppSsoIntentCookieOptions(retryIntent.expiresAt),
+    );
+    return response;
   }
 }

@@ -35,6 +35,8 @@ export interface TaskBillingInfo {
   status:
     | "not_applicable"
     | "reserved"
+    | "provider_committed"
+    | "settle_pending"
     | "settled"
     | "released"
     | "insufficient_balance";
@@ -53,6 +55,7 @@ export interface TaskItem {
   logs: LogEntry[];
   billing?: TaskBillingInfo;
   inputs: {
+    avatarId?: string;
     videoName: string;
     videoPath: string;
     videoUrl: string;
@@ -74,6 +77,7 @@ export interface TaskItem {
     lipsyncProvider?: LipsyncProvider;
     lipsyncCredits?: number;
     pixverseResultUrl?: string;
+    heygenResultUrl?: string;
     veedResultUrl?: string;
     chargedPoints?: number;
     costCny?: number;
@@ -97,27 +101,49 @@ export interface TaskItem {
   error?: string;
 }
 
-const STORE_PATH = path.join(process.cwd(), ".tasks.json");
-const BACKUP_STORE_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".tasks.json");
+const STATE_DIR = path.join(process.cwd(), ".runtime", "state");
+const STORE_PATH = path.join(STATE_DIR, "tasks.json");
+const BACKUP_STORE_PATH = path.join(STATE_DIR, "tasks.backup.json");
+const LEGACY_STORE_PATH = path.join(process.cwd(), ".tasks.json");
+const LEGACY_ROOT_BACKUP_STORE_PATH = path.join(process.cwd(), ".tasks.backup.json");
+const LEGACY_BACKUP_STORE_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".tasks.json");
 const COS_TASKS_KEY = "_system/tasks.json";
 const memoryTasks = new Map<string, TaskItem>();
+const deletedTaskIds = new Set<string>();
 const subscribers = new Map<string, Set<(task: TaskItem) => void>>();
 let hasLoadedFromCloud = false;
 
 function reloadFromDisk() {
   try {
     let raw = "";
+    let migrateLegacy = false;
     if (fs.existsSync(STORE_PATH)) {
       raw = fs.readFileSync(STORE_PATH, "utf-8");
     } else if (fs.existsSync(BACKUP_STORE_PATH)) {
       raw = fs.readFileSync(BACKUP_STORE_PATH, "utf-8");
-      try { fs.writeFileSync(STORE_PATH, raw, "utf-8"); } catch {}
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_STORE_PATH)) {
+      raw = fs.readFileSync(LEGACY_STORE_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_ROOT_BACKUP_STORE_PATH)) {
+      raw = fs.readFileSync(LEGACY_ROOT_BACKUP_STORE_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_BACKUP_STORE_PATH)) {
+      raw = fs.readFileSync(LEGACY_BACKUP_STORE_PATH, "utf-8");
+      migrateLegacy = true;
     }
 
     if (raw) {
       const arr: TaskItem[] = JSON.parse(raw);
       for (const t of arr) {
-        memoryTasks.set(t.id, t);
+        if (!deletedTaskIds.has(t.id)) memoryTasks.set(t.id, t);
+      }
+      if (migrateLegacy) {
+        try {
+          fs.mkdirSync(STATE_DIR, { recursive: true });
+          fs.writeFileSync(STORE_PATH, raw, "utf-8");
+          fs.writeFileSync(BACKUP_STORE_PATH, raw, "utf-8");
+        } catch {}
       }
     }
   } catch (e) {
@@ -133,12 +159,11 @@ function persistStore() {
       (a, b) => b.createdAt - a.createdAt
     );
     const content = JSON.stringify(arr, null, 2);
+    fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(STORE_PATH, content, "utf-8");
 
     // Mirror to persistent mounted volume
     try {
-      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
-      fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_STORE_PATH, content, "utf-8");
     } catch {}
 
@@ -163,6 +188,7 @@ export const TaskStore = {
         const cloudTasks = await CosService.getJsonFromCos<TaskItem[]>(COS_TASKS_KEY);
         if (cloudTasks && Array.isArray(cloudTasks) && cloudTasks.length > 0) {
           for (const t of cloudTasks) {
+            if (deletedTaskIds.has(t.id)) continue;
             const existing = memoryTasks.get(t.id);
             if (!existing || (t.updatedAt || 0) > (existing.updatedAt || 0)) {
               memoryTasks.set(t.id, t);
@@ -210,6 +236,7 @@ export const TaskStore = {
   create(data: Omit<TaskItem, "id" | "createdAt" | "updatedAt" | "logs">): TaskItem {
     reloadFromDisk();
     const id = "task_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+    deletedTaskIds.delete(id);
     const now = Date.now();
     const task: TaskItem = {
       ...data,
@@ -231,6 +258,7 @@ export const TaskStore = {
   },
 
   update(id: string, partial: Partial<TaskItem>): TaskItem | undefined {
+    if (deletedTaskIds.has(id)) return undefined;
     reloadFromDisk();
     const existing = memoryTasks.get(id);
     if (!existing) return undefined;
@@ -256,6 +284,7 @@ export const TaskStore = {
     message: string,
     level: LogEntry["level"] = "info"
   ): void {
+    if (deletedTaskIds.has(id)) return;
     reloadFromDisk();
     const task = memoryTasks.get(id);
     if (!task) return;
@@ -272,8 +301,15 @@ export const TaskStore = {
   delete(id: string): boolean {
     reloadFromDisk();
     const res = memoryTasks.delete(id);
-    if (res) persistStore();
+    if (res) {
+      deletedTaskIds.add(id);
+      persistStore();
+    }
     return res;
+  },
+
+  isDeleted(id: string): boolean {
+    return deletedTaskIds.has(id);
   },
 
   subscribe(id: string, callback: (task: TaskItem) => void): () => void {
@@ -282,7 +318,9 @@ export const TaskStore = {
     }
     subscribers.get(id)!.add(callback);
     return () => {
-      subscribers.get(id)?.delete(callback);
+      const set = subscribers.get(id);
+      set?.delete(callback);
+      if (set?.size === 0) subscribers.delete(id);
     };
   },
 

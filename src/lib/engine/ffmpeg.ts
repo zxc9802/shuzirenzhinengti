@@ -26,20 +26,64 @@ export function sha256File(filePath: string): Promise<string> {
   });
 }
 
-function execCommand(command: string, args: string[]): Promise<string> {
+export function execMediaCommand(
+  command: string,
+  args: string[],
+  options: { timeoutMs?: number; maxOutputBytes?: number } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const timeoutMs = options.timeoutMs ?? 20 * 60_000;
+    const maxOutputBytes = options.maxOutputBytes ?? 4 * 1024 * 1024;
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
     let stdout = "";
     let stderr = "";
+    let outputBytes = 0;
+    let settled = false;
+    const stop = () => {
+      if (child.exitCode !== null || child.killed) return;
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM");
+        else child.kill("SIGTERM");
+      } catch {}
+      setTimeout(() => {
+        if (child.exitCode !== null) return;
+        try {
+          if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+          else child.kill("SIGKILL");
+        } catch {}
+      }, 1000).unref();
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stop();
+      reject(error);
+    };
+    const append = (target: "stdout" | "stderr", chunk: Buffer) => {
+      outputBytes += chunk.byteLength;
+      if (outputBytes > maxOutputBytes) {
+        fail(new Error(`Command output exceeded ${maxOutputBytes} bytes`));
+        return;
+      }
+      if (target === "stdout") stdout += chunk.toString();
+      else stderr += chunk.toString();
+    };
+    const timer = setTimeout(
+      () => fail(new Error(`Command timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
+    child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
+    child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
 
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (code === 0) {
         resolve(stdout);
       } else {
@@ -50,9 +94,11 @@ function execCommand(command: string, args: string[]): Promise<string> {
         );
       }
     });
-    child.on("error", (err) => reject(err));
+    child.on("error", (err) => fail(err));
   });
 }
+
+const execCommand = execMediaCommand;
 
 export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
   if (!fs.existsSync(filePath)) {
@@ -426,6 +472,14 @@ export async function extractVideoThumbnail(
       "-hide_banner",
       "-loglevel",
       "error",
+      "-threads",
+      "1",
+      "-filter_threads",
+      "1",
+      "-filter_complex_threads",
+      "1",
+      "-max_alloc",
+      `${256 * 1024 * 1024}`,
       "-y",
       "-i",
       videoPathOrUrl,
@@ -433,11 +487,16 @@ export async function extractVideoThumbnail(
       `${seekSeconds}`,
       "-vframes",
       "1",
+      "-vf",
+      "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease",
       "-q:v",
       "2",
       outputImagePath,
     ];
-    await execCommand("ffmpeg", args);
+    await execMediaCommand("ffmpeg", args, {
+      timeoutMs: 2 * 60_000,
+      maxOutputBytes: 512 * 1024,
+    });
     if (fs.existsSync(outputImagePath) && fs.statSync(outputImagePath).size > 100) {
       return outputImagePath;
     }
@@ -451,6 +510,14 @@ export async function extractVideoThumbnail(
       "-hide_banner",
       "-loglevel",
       "error",
+      "-threads",
+      "1",
+      "-filter_threads",
+      "1",
+      "-filter_complex_threads",
+      "1",
+      "-max_alloc",
+      `${256 * 1024 * 1024}`,
       "-y",
       "-i",
       videoPathOrUrl,
@@ -458,11 +525,16 @@ export async function extractVideoThumbnail(
       "00:00:00.3",
       "-vframes",
       "1",
+      "-vf",
+      "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease",
       "-q:v",
       "2",
       outputImagePath,
     ];
-    await execCommand("ffmpeg", args);
+    await execMediaCommand("ffmpeg", args, {
+      timeoutMs: 2 * 60_000,
+      maxOutputBytes: 512 * 1024,
+    });
     if (fs.existsSync(outputImagePath) && fs.statSync(outputImagePath).size > 100) {
       return outputImagePath;
     }
@@ -475,16 +547,28 @@ export async function extractVideoThumbnail(
     "-hide_banner",
     "-loglevel",
     "error",
+    "-threads",
+    "1",
+    "-filter_threads",
+    "1",
+    "-filter_complex_threads",
+    "1",
+    "-max_alloc",
+    `${256 * 1024 * 1024}`,
     "-y",
     "-i",
     videoPathOrUrl,
     "-vframes",
     "1",
+    "-vf",
+    "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease",
     "-q:v",
     "2",
     outputImagePath,
   ];
-  await execCommand("ffmpeg", argsFirstFrame);
+  await execMediaCommand("ffmpeg", argsFirstFrame, {
+    timeoutMs: 2 * 60_000,
+    maxOutputBytes: 512 * 1024,
+  });
   return outputImagePath;
 }
-

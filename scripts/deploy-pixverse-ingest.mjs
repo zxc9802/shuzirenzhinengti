@@ -91,7 +91,7 @@ function zipFunction() {
   }
 
   const zipPath = path.join(os.tmpdir(), `pixverse-ingest-${Date.now()}.zip`);
-  const zip = spawnSync("zip", ["-r", zipPath, "index.mjs", "package.json", "node_modules"], {
+  const zip = spawnSync("zip", ["-r", zipPath, "app.js", "scf_bootstrap", "package.json", "node_modules"], {
     cwd: FN_DIR,
     stdio: "inherit",
   });

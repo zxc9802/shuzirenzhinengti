@@ -231,8 +231,8 @@ export default function PlayerComparison({
           )}
           {exactAudioUrl && (
             <a
-              href={`/api/tasks/${taskId}/download/exact-final-indextts.wav`}
-              download="exact-final-indextts.wav"
+              href={`/api/tasks/${taskId}/download/voice-track.wav`}
+              download="voice-track.wav"
               className="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-semibold text-zinc-200 transition-all border border-white/[0.08]"
             >
               <FileAudio className="h-3.5 w-3.5 text-blue-400" />
@@ -241,8 +241,8 @@ export default function PlayerComparison({
           )}
           {evidenceJsonUrl && (
             <a
-              href={`/api/tasks/${taskId}/download/evidence.json`}
-              download="evidence.json"
+              href={`/api/tasks/${taskId}/download/production-report.json`}
+              download="production-report.json"
               className="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-semibold text-zinc-200 transition-all border border-white/[0.08]"
             >
               <FileCheck className="h-3.5 w-3.5 text-zinc-400" />

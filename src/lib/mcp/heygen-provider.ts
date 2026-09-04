@@ -39,6 +39,7 @@ export class HeyGenDirectMcpProvider {
       const resp = await fetch(`${baseUrl}/v1/user/remaining_quota`, {
         method: "GET",
         headers: authHeaders,
+        redirect: "error",
       });
 
       const data = await resp.json().catch(() => ({}));
@@ -56,6 +57,7 @@ export class HeyGenDirectMcpProvider {
       const userResp = await fetch(`${baseUrl}/v2/user/info`, {
         method: "GET",
         headers: authHeaders,
+        redirect: "error",
       });
 
       const userData = await userResp.json().catch(() => ({}));
@@ -117,6 +119,7 @@ export class HeyGenDirectMcpProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      redirect: "error",
     });
 
     const data = await resp.json();
@@ -161,6 +164,7 @@ export class HeyGenDirectMcpProvider {
     const resp = await fetch(`${baseUrl}/v1/video_status.get?video_id=${lipsyncId}`, {
       method: "GET",
       headers: getAuthHeaders(apiKey),
+      redirect: "error",
     });
 
     const data = await resp.json();

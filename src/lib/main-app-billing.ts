@@ -157,6 +157,7 @@ async function postBillingApi(
       cache: "no-store",
       headers,
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
     });
 
     const payload = (await response.json().catch(() => ({}))) as {
@@ -167,7 +168,7 @@ async function postBillingApi(
       code?: string;
     };
 
-    if (!response.ok || payload.success === false) {
+    if (!response.ok || payload.success !== true) {
       const errorMsg =
         payload.error ||
         payload.message ||
@@ -292,7 +293,11 @@ export async function settleMainAppCredits(input: {
   const costCny = calculateCostCny(actualDuration);
 
   if (!input.userId || !input.requestId) {
-    return { chargedPoints, costCny, actualDuration };
+    throw new MainAppBillingError(
+      "任务缺少主站积分结算标识",
+      500,
+      "BILLING_IDENTITY_MISSING",
+    );
   }
 
   const result = await postBillingApi({
@@ -303,6 +308,14 @@ export async function settleMainAppCredits(input: {
     points: chargedPoints,
     token: input.sessionToken,
   });
+
+  if (!result.success) {
+    throw new MainAppBillingError(
+      result.error || "主站积分结算失败",
+      503,
+      result.code || "BILLING_SETTLEMENT_FAILED",
+    );
+  }
 
   return {
     chargedPoints,
@@ -320,12 +333,25 @@ export async function releaseMainAppCredits(input: {
   requestId: string;
   sessionToken?: string;
 }): Promise<void> {
-  if (!input.userId || !input.requestId) return;
+  if (!input.userId || !input.requestId) {
+    throw new MainAppBillingError(
+      "任务缺少主站积分释放标识",
+      500,
+      "BILLING_IDENTITY_MISSING",
+    );
+  }
 
-  await postBillingApi({
+  const result = await postBillingApi({
     action: "release",
     userId: input.userId,
     requestId: input.requestId,
     token: input.sessionToken,
   });
+  if (!result.success) {
+    throw new MainAppBillingError(
+      result.error || "主站积分释放失败",
+      503,
+      result.code || "BILLING_RELEASE_FAILED",
+    );
+  }
 }

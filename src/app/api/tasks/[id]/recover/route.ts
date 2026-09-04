@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TaskStore } from "@/lib/store/task-store";
+import { isTaskOutputDeliverable, toPublicTask } from "@/lib/server/public-data";
 import {
   isRecoverableLipsyncTask,
   recoverStuckLipsyncTask,
@@ -26,8 +27,8 @@ export async function POST(
     return taskNotFoundResponse();
   }
 
-  if (task.status === "completed" && task.results?.finalVideoUrl) {
-    return NextResponse.json({ success: true, task, alreadyCompleted: true });
+  if (isTaskOutputDeliverable(task) && task.results?.finalVideoUrl) {
+    return NextResponse.json({ success: true, task: toPublicTask(task), alreadyCompleted: true });
   }
 
   if (!isRecoverableLipsyncTask(task)) {
@@ -38,11 +39,11 @@ export async function POST(
   }
 
   try {
-    const recovered = await recoverStuckLipsyncTask(id);
-    return NextResponse.json({ success: true, task: recovered });
+    const recovered = await recoverStuckLipsyncTask(id, access.session?.token);
+    return NextResponse.json({ success: true, task: toPublicTask(recovered) });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "恢复失败" },
+      { error: "恢复失败，请稍后重试" },
       { status: 500 }
     );
   }

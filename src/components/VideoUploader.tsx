@@ -16,16 +16,11 @@ import {
 } from "lucide-react";
 import { formatBytes, formatDuration } from "@/lib/utils";
 import AvatarLibrary from "./AvatarLibrary";
-import { AvatarItem } from "@/lib/store/avatar-store";
-import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
+import type { PublicAvatarItem, PublicVideoSelection } from "@/lib/public-contract";
+import { uploadMediaFile } from "@/lib/client-media-upload";
 
 interface VideoUploaderProps {
-  onVideoUploaded: (videoData: {
-    name: string;
-    path: string;
-    url: string;
-    probe: any;
-  }) => void;
+  onVideoUploaded: (videoData: PublicVideoSelection) => void;
   disabled?: boolean;
 }
 
@@ -98,7 +93,7 @@ export default function VideoUploader({
 
     try {
       // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
-      const videoResult = await uploadFileDirectToCos(
+      const videoResult = await uploadMediaFile(
         file,
         file.name,
         "videos",
@@ -111,15 +106,15 @@ export default function VideoUploader({
       );
 
       // 2. Direct upload client-captured thumbnail if available
-      let coverUrl = "";
+      let coverKey = "";
       if (capturedThumbBlob) {
         try {
-          const thumbResult = await uploadFileDirectToCos(
+          const thumbResult = await uploadMediaFile(
             capturedThumbBlob,
             `${file.name.replace(/\.[^/.]+$/, "")}_thumb.jpg`,
             "thumbnails"
           );
-          coverUrl = thumbResult.fileUrl;
+          coverKey = thumbResult.uploadKey;
         } catch {}
       }
 
@@ -134,14 +129,13 @@ export default function VideoUploader({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: displayName,
-          videoUrl: videoResult.fileUrl,
-          coverUrl,
+          uploadKey: videoResult.uploadKey,
+          coverKey,
           durationSeconds: localProbe?.durationSeconds || 0,
           width: localProbe?.width || 1080,
           height: localProbe?.height || 1920,
           fps: 30,
           fileSize: file.size,
-          isCos: videoResult.isCos,
         }),
       });
 
@@ -150,10 +144,9 @@ export default function VideoUploader({
 
       const finalData = {
         fileName: displayName,
-        filePath: "",
-        fileUrl: videoResult.fileUrl,
+        fileUrl: res.avatar.videoUrl,
         size: file.size,
-        isCos: videoResult.isCos,
+        isCos: videoResult.storedRemotely,
         avatar: res.avatar,
         previewBlobUrl: localBlobUrl,
         probe: {
@@ -167,9 +160,9 @@ export default function VideoUploader({
       if (res.avatar?.id) setSelectedAvatarId(res.avatar.id);
 
       onVideoUploaded({
+        avatarId: res.avatar.id,
         name: displayName,
-        path: "",
-        url: videoResult.fileUrl,
+        previewUrl: localBlobUrl,
         probe: finalData.probe,
       });
     } catch (err: any) {
@@ -179,14 +172,13 @@ export default function VideoUploader({
     }
   };
 
-  const handleSelectFromLibrary = (avatar: AvatarItem) => {
+  const handleSelectFromLibrary = (avatar: PublicAvatarItem) => {
     setSelectedAvatarId(avatar.id);
     const data = {
       fileName: avatar.name,
-      filePath: avatar.videoPath || "",
       fileUrl: avatar.videoUrl,
       size: avatar.fileSize,
-      isCos: avatar.isCos,
+      isCos: avatar.storedRemotely,
       probe: {
         width: avatar.width,
         height: avatar.height,
@@ -197,9 +189,9 @@ export default function VideoUploader({
     };
     setUploadedInfo(data);
     onVideoUploaded({
+      avatarId: avatar.id,
       name: avatar.name,
-      path: avatar.videoPath || "",
-      url: avatar.videoUrl,
+      previewUrl: avatar.videoUrl,
       probe: data.probe,
     });
   };

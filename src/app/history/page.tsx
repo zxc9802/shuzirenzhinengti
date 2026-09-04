@@ -2,12 +2,12 @@
 
 import React, { useEffect, useState } from "react";
 import { History, Film, Download, CheckCircle2, AlertCircle, Clock, Trash2, ArrowRight, Play, Coins } from "lucide-react";
-import { TaskItem } from "@/lib/store/task-store";
+import type { PublicTaskItem } from "@/lib/public-contract";
 import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
 
 export default function HistoryPage() {
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [tasks, setTasks] = useState<PublicTaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 

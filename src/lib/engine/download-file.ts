@@ -1,9 +1,14 @@
 import fs from "fs";
 import path from "path";
+import {
+  fetchWithOutboundUrlPolicy,
+  type OutboundUrlPolicy,
+} from "../server/outbound-url-policy";
 
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_STALL_MS = 45_000;
 const DEFAULT_TIMEOUT_MS = 8 * 60_000;
+const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,6 +21,8 @@ export async function downloadFileToDisk(params: {
   attempts?: number;
   stallTimeoutMs?: number;
   timeoutMs?: number;
+  maxBytes?: number;
+  urlPolicy: OutboundUrlPolicy;
 }): Promise<{ bytes: number }> {
   const {
     url,
@@ -24,6 +31,8 @@ export async function downloadFileToDisk(params: {
     attempts = DEFAULT_ATTEMPTS,
     stallTimeoutMs = DEFAULT_STALL_MS,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxBytes = DEFAULT_MAX_BYTES,
+    urlPolicy,
   } = params;
 
   let lastError: Error | null = null;
@@ -39,6 +48,8 @@ export async function downloadFileToDisk(params: {
         onProgress,
         stallTimeoutMs,
         timeoutMs,
+        maxBytes,
+        urlPolicy,
       });
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -59,8 +70,10 @@ async function downloadOnce(params: {
   onProgress?: (message: string) => void;
   stallTimeoutMs: number;
   timeoutMs: number;
+  maxBytes: number;
+  urlPolicy: OutboundUrlPolicy;
 }): Promise<{ bytes: number }> {
-  const { url, outputPath, onProgress, stallTimeoutMs, timeoutMs } = params;
+  const { url, outputPath, onProgress, stallTimeoutMs, timeoutMs, maxBytes, urlPolicy } = params;
   const controller = new AbortController();
   const deadline = Date.now() + timeoutMs;
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -80,18 +93,22 @@ async function downloadOnce(params: {
   armStall();
 
   try {
-    const resp = await fetch(url, {
+    const resp = await fetchWithOutboundUrlPolicy(url, {
       signal: controller.signal,
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; DigitalHumanStudio/1.0)",
         Accept: "*/*",
       },
-    });
+    }, urlPolicy);
     if (!resp.ok) {
       throw new Error(`下载失败 (${resp.status} ${resp.statusText})`);
     }
     if (!resp.body) {
       throw new Error("下载失败：响应没有内容");
+    }
+    const declaredLength = Number(resp.headers.get("content-length") || 0);
+    if (declaredLength > maxBytes) {
+      throw new Error("下载失败：文件超过大小限制");
     }
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -109,6 +126,9 @@ async function downloadOnce(params: {
         const { done, value } = await reader.read();
         if (done) break;
         received += value.byteLength;
+        if (received > maxBytes) {
+          throw new Error("下载失败：文件超过大小限制");
+        }
         armStall();
         await new Promise<void>((resolve, reject) => {
           writer.write(Buffer.from(value), (err) => (err ? reject(err) : resolve()));

@@ -24,6 +24,12 @@ node_modules
 .settings.json
 .heygen-mcp-auth.json
 .tasks.json
+.tasks.backup.json
+.voices.json
+.voices.backup.json
+.avatars.json
+.avatars.backup.json
+.runtime/
 
 # Logs
 npm-debug.log*

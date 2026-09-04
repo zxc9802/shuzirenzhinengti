@@ -14,15 +14,19 @@ export interface VoiceItem {
   canManage?: boolean;
 }
 
-const VOICES_FILE_PATH = path.join(process.cwd(), ".voices.json");
-const BACKUP_VOICES_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".voices.json");
+const STATE_DIR = path.join(process.cwd(), ".runtime", "state");
+const VOICES_FILE_PATH = path.join(STATE_DIR, "voices.json");
+const BACKUP_VOICES_PATH = path.join(STATE_DIR, "voices.backup.json");
+const LEGACY_VOICES_PATH = path.join(process.cwd(), ".voices.json");
+const LEGACY_ROOT_BACKUP_VOICES_PATH = path.join(process.cwd(), ".voices.backup.json");
+const LEGACY_BACKUP_VOICES_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".voices.json");
 const COS_VOICES_KEY = "_system/voices.json";
 
 const DEFAULT_VOICES: VoiceItem[] = [
   {
     id: "default_speaker_1",
     name: "默认推荐音色 (深沉口播)",
-    audioUrl: "https://file.302.ai/gpt/imgs/20260819/9312a23901fa7f214037fa88513a64b3.mp3",
+    audioUrl: process.env.INDEXTTS_SPEAKER_AUDIO_URL || "",
     description: "稳重大气，适合企业宣讲、商业洞察与深度口播",
     createdAt: 1787700000000,
     isDefault: true,
@@ -35,17 +39,34 @@ let hasLoadedFromCloud = false;
 function reloadFromDisk() {
   try {
     let raw = "";
+    let migrateLegacy = false;
     if (fs.existsSync(VOICES_FILE_PATH)) {
       raw = fs.readFileSync(VOICES_FILE_PATH, "utf-8");
     } else if (fs.existsSync(BACKUP_VOICES_PATH)) {
       raw = fs.readFileSync(BACKUP_VOICES_PATH, "utf-8");
-      try { fs.writeFileSync(VOICES_FILE_PATH, raw, "utf-8"); } catch {}
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_VOICES_PATH)) {
+      raw = fs.readFileSync(LEGACY_VOICES_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_ROOT_BACKUP_VOICES_PATH)) {
+      raw = fs.readFileSync(LEGACY_ROOT_BACKUP_VOICES_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_BACKUP_VOICES_PATH)) {
+      raw = fs.readFileSync(LEGACY_BACKUP_VOICES_PATH, "utf-8");
+      migrateLegacy = true;
     }
 
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         memoryVoices = parsed;
+      }
+      if (migrateLegacy) {
+        try {
+          fs.mkdirSync(STATE_DIR, { recursive: true });
+          fs.writeFileSync(VOICES_FILE_PATH, raw, "utf-8");
+          fs.writeFileSync(BACKUP_VOICES_PATH, raw, "utf-8");
+        } catch {}
       }
     } else {
       memoryVoices = [...DEFAULT_VOICES];
@@ -58,12 +79,11 @@ function reloadFromDisk() {
 function persistStore() {
   try {
     const content = JSON.stringify(memoryVoices, null, 2);
+    fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(VOICES_FILE_PATH, content, "utf-8");
 
     // Mirror to persistent mounted volume
     try {
-      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
-      fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_VOICES_PATH, content, "utf-8");
     } catch {}
 

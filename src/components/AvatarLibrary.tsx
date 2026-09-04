@@ -14,12 +14,12 @@ import {
   Search,
   Plus,
 } from "lucide-react";
-import { AvatarItem } from "@/lib/store/avatar-store";
+import type { PublicAvatarItem } from "@/lib/public-contract";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
 
 interface AvatarLibraryProps {
   selectedAvatarId?: string;
-  onSelectAvatar: (avatar: AvatarItem) => void;
+  onSelectAvatar: (avatar: PublicAvatarItem) => void;
   onUploadNew: () => void;
   disabled?: boolean;
 }
@@ -30,7 +30,7 @@ export default function AvatarLibrary({
   onUploadNew,
   disabled = false,
 }: AvatarLibraryProps) {
-  const [avatars, setAvatars] = useState<AvatarItem[]>([]);
+  const [avatars, setAvatars] = useState<PublicAvatarItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -151,7 +151,7 @@ export default function AvatarLibrary({
                       />
                     )}
                     <div className="absolute top-1 right-1 z-10">
-                      {avatar.isCos ? (
+                      {avatar.storedRemotely ? (
                         <span className="flex items-center gap-0.5 rounded bg-blue-500/80 px-1 py-0.2 text-[8px] font-bold text-white shadow-sm">
                           <Cloud className="h-2 w-2" /> COS
                         </span>

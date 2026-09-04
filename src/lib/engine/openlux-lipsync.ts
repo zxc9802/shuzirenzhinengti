@@ -5,6 +5,7 @@ import { getAppConfig } from "../config";
 import { CosService } from "../cos";
 import { concatVideos, probeMedia, sliceMedia } from "./ffmpeg";
 import { downloadFileToDisk } from "./download-file";
+import { exactHostUrlPolicy } from "../server/outbound-url-policy";
 import { downloadPixverseResult } from "./pixverse-ingest";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
 
@@ -29,6 +30,7 @@ export interface OpenLuxLipsyncOptions {
   audioUrl?: string;
   existingChunks?: OpenLuxChunkProgress[];
   onLog?: (msg: string) => void;
+  onProviderAccepted?: () => void;
   onJobCreated?: (info: OpenLuxJobProgress) => void;
   onResultReady?: (info: OpenLuxJobProgress) => void;
   onChunkProgress?: (chunk: OpenLuxChunkProgress) => void;
@@ -148,7 +150,11 @@ export class OpenLuxLipsyncAdapter {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 20_000);
       try {
-        const resp = await fetch(url, { ...init, signal: controller.signal });
+        const resp = await fetch(url, {
+          ...init,
+          signal: controller.signal,
+          redirect: "error",
+        });
         if (resp.status >= 500 || resp.status === 429) {
           lastError = new Error(`HTTP ${resp.status}`);
           await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
@@ -213,6 +219,7 @@ export class OpenLuxLipsyncAdapter {
         }),
       });
       const created = this.assertOk(await this.parseJson(createResp), "创建对口型任务");
+      options.onProviderAccepted?.();
       lipsyncId = String(created.video_id || "");
       if (!lipsyncId) {
         throw new Error("OpenLux 未返回 video_id");
@@ -334,7 +341,7 @@ export class OpenLuxLipsyncAdapter {
 
     const audioProbe = await probeMedia(options.audioPath);
     const chunks = planLipsyncChunks(audioProbe.durationSeconds);
-    const rawVideoPath = path.join(outDir, "heygen-result-raw.mp4");
+    const rawVideoPath = path.join(outDir, "rendered-source.mp4");
     const ctx = { apiKey, baseUrl, model };
 
     onLog(
@@ -376,7 +383,11 @@ export class OpenLuxLipsyncAdapter {
         if (await CosService.objectExists(cosKey)) {
           onLog(`[PixVerse] 第 ${label} 段已在 COS，正在取回，不重复扣费...`);
           const pullUrl = await CosService.getDownloadUrl(cosKey, path.basename(chunkOut));
-          await downloadFileToDisk({ url: pullUrl, outputPath: chunkOut });
+          await downloadFileToDisk({
+            url: pullUrl,
+            outputPath: chunkOut,
+            urlPolicy: exactHostUrlPolicy(pullUrl, "cos"),
+          });
         }
       }
 

@@ -19,8 +19,12 @@ export interface AvatarItem {
   canManage?: boolean;
 }
 
-const AVATARS_FILE_PATH = path.join(process.cwd(), ".avatars.json");
-const BACKUP_AVATARS_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".avatars.json");
+const STATE_DIR = path.join(process.cwd(), ".runtime", "state");
+const AVATARS_FILE_PATH = path.join(STATE_DIR, "avatars.json");
+const BACKUP_AVATARS_PATH = path.join(STATE_DIR, "avatars.backup.json");
+const LEGACY_AVATARS_PATH = path.join(process.cwd(), ".avatars.json");
+const LEGACY_ROOT_BACKUP_AVATARS_PATH = path.join(process.cwd(), ".avatars.backup.json");
+const LEGACY_BACKUP_AVATARS_PATH = path.join(process.cwd(), "public", "jobs", ".backup", ".avatars.json");
 const COS_AVATARS_KEY = "_system/avatars.json";
 
 let memoryAvatars: AvatarItem[] = [];
@@ -29,17 +33,34 @@ let hasLoadedFromCloud = false;
 function reloadFromDisk() {
   try {
     let raw = "";
+    let migrateLegacy = false;
     if (fs.existsSync(AVATARS_FILE_PATH)) {
       raw = fs.readFileSync(AVATARS_FILE_PATH, "utf-8");
     } else if (fs.existsSync(BACKUP_AVATARS_PATH)) {
       raw = fs.readFileSync(BACKUP_AVATARS_PATH, "utf-8");
-      try { fs.writeFileSync(AVATARS_FILE_PATH, raw, "utf-8"); } catch {}
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_AVATARS_PATH)) {
+      raw = fs.readFileSync(LEGACY_AVATARS_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_ROOT_BACKUP_AVATARS_PATH)) {
+      raw = fs.readFileSync(LEGACY_ROOT_BACKUP_AVATARS_PATH, "utf-8");
+      migrateLegacy = true;
+    } else if (fs.existsSync(LEGACY_BACKUP_AVATARS_PATH)) {
+      raw = fs.readFileSync(LEGACY_BACKUP_AVATARS_PATH, "utf-8");
+      migrateLegacy = true;
     }
 
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         memoryAvatars = parsed;
+      }
+      if (migrateLegacy) {
+        try {
+          fs.mkdirSync(STATE_DIR, { recursive: true });
+          fs.writeFileSync(AVATARS_FILE_PATH, raw, "utf-8");
+          fs.writeFileSync(BACKUP_AVATARS_PATH, raw, "utf-8");
+        } catch {}
       }
     }
   } catch (e) {
@@ -50,12 +71,11 @@ function reloadFromDisk() {
 function persistStore() {
   try {
     const content = JSON.stringify(memoryAvatars, null, 2);
+    fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(AVATARS_FILE_PATH, content, "utf-8");
 
     // Mirror to persistent mounted volume
     try {
-      const backupDir = path.join(process.cwd(), "public", "jobs", ".backup");
-      fs.mkdirSync(backupDir, { recursive: true });
       fs.writeFileSync(BACKUP_AVATARS_PATH, content, "utf-8");
     } catch {}
 

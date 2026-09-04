@@ -13,30 +13,30 @@ import {
   Activity,
   CircleDashed,
 } from "lucide-react";
-import { TaskStep } from "@/lib/store/task-store";
+import type { PublicTaskStep } from "@/lib/public-contract";
 import { cn } from "@/lib/utils";
 
 interface PipelineVisualizerProps {
-  step: TaskStep;
-  failedStep?: TaskStep;
+  step: PublicTaskStep;
+  failedStep?: PublicTaskStep;
   progress: number;
   status: "idle" | "pending" | "processing" | "completed" | "failed";
 }
 
 const STEPS = [
-  { key: "tts", label: "原声配音合成", sub: "专属音色克隆", icon: Mic },
-  { key: "media_prep", label: "音画智能对齐", sub: "帧率时长优化", icon: Film },
-  { key: "mcp_preflight", label: "质量合规校验", sub: "规格与完整性", icon: ShieldCheck },
-  { key: "mcp_lipsync_submit", label: "高精度对口型", sub: "自然唇形驱动", icon: Cpu },
+  { key: "voice", label: "原声配音合成", sub: "专属音色克隆", icon: Mic },
+  { key: "prepare", label: "音画智能对齐", sub: "帧率时长优化", icon: Film },
+  { key: "check", label: "质量合规校验", sub: "规格与完整性", icon: ShieldCheck },
+  { key: "render", label: "高精度对口型", sub: "自然唇形驱动", icon: Cpu },
   { key: "finalize", label: "高清混流封装", sub: "无损音画合成", icon: Layers },
   { key: "done", label: "成片交付就绪", sub: "生成完成可播放", icon: CheckCircle2 },
 ];
 
-function stepToIndex(stepKey: TaskStep): number {
-  if (stepKey === "tts") return 0;
-  if (stepKey === "media_prep") return 1;
-  if (stepKey === "mcp_preflight") return 2;
-  if (stepKey === "mcp_lipsync_submit" || stepKey === "mcp_lipsync_polling") return 3;
+function stepToIndex(stepKey: PublicTaskStep): number {
+  if (stepKey === "voice") return 0;
+  if (stepKey === "prepare") return 1;
+  if (stepKey === "check") return 2;
+  if (stepKey === "render") return 3;
   if (stepKey === "finalize") return 4;
   if (stepKey === "done") return 5;
   return -1;

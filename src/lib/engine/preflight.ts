@@ -44,9 +44,22 @@ export async function preflightHeyGenMedia(
       return { ok: false, match: false };
     }
 
-    // 2. Read full bytes and verify sha256 with local file
-    const buffer = Buffer.from(await resp.arrayBuffer());
-    const remoteHash = crypto.createHash("sha256").update(buffer).digest("hex");
+    // 2. Stream bytes with a hard limit and verify sha256 with local file.
+    if (!resp.body) return { ok: false, match: false };
+    const localSize = fs.statSync(localPath).size;
+    const declaredLength = Number(resp.headers.get("content-length") || 0);
+    if (declaredLength > localSize) return { ok: false, match: false };
+    const remoteHasher = crypto.createHash("sha256");
+    const reader = resp.body.getReader();
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > localSize) return { ok: false, match: false };
+      remoteHasher.update(value);
+    }
+    const remoteHash = remoteHasher.digest("hex");
 
     const localBuffer = fs.readFileSync(localPath);
     const localHash = crypto.createHash("sha256").update(localBuffer).digest("hex");

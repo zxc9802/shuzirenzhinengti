@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-import { Readable } from "stream";
-import { CosService } from "@/lib/cos";
 import { TaskStore } from "@/lib/store/task-store";
+import { isTrustedTaskOutputSource, servePrivateMedia } from "@/lib/server/media-response";
+import { isTaskOutputDeliverable, toPublicTask } from "@/lib/server/public-data";
 import {
   canAccessTask,
   resolveAccessContext,
@@ -21,42 +19,60 @@ export async function GET(
   }
 
   const { id, file } = await params;
-  const safeFileName = path.basename(file);
-
-  const task = TaskStore.get(id);
+  const task = await TaskStore.getAsync(id);
   if (!task || !canAccessTask(access, task)) {
     return taskNotFoundResponse();
   }
+  if (file !== "production-report.json" && !isTaskOutputDeliverable(task)) {
+    return taskNotFoundResponse();
+  }
 
-  if (CosService.isConfigured()) {
-    const cosKey = `jobs/${id}/${safeFileName}`;
-    try {
-      const cosUrl = await CosService.getDownloadUrl(cosKey, safeFileName);
-      return NextResponse.redirect(cosUrl, 302);
-    } catch {
-      // fall through to local
+  if (file === "final.mp4") {
+    if (!isTrustedTaskOutputSource(task.results.finalVideoUrl, id, ["final.mp4"])) {
+      return taskNotFoundResponse();
     }
+    return servePrivateMedia(req, task.results.finalVideoUrl, {
+      contentType: "video/mp4",
+      downloadName: "digital-human-video.mp4",
+    });
   }
-
-  const filePath = path.join(process.cwd(), "public", "jobs", id, safeFileName);
-  if (!fs.existsSync(filePath)) {
-    return new NextResponse("File not found", { status: 404 });
+  if (file === "voice-track.wav") {
+    if (!isTrustedTaskOutputSource(task.results.exactAudioUrl, id, ["voice-track.wav", "exact-final-indextts.wav"])) {
+      return taskNotFoundResponse();
+    }
+    return servePrivateMedia(req, task.results.exactAudioUrl, {
+      contentType: "audio/wav",
+      downloadName: "voice-track.wav",
+    });
   }
-
-  const stat = fs.statSync(filePath);
-  const headers = new Headers();
-  headers.set("Content-Disposition", `attachment; filename="${safeFileName}"`);
-  headers.set("Content-Length", String(stat.size));
-  headers.set("Cache-Control", "private, max-age=3600");
-
-  if (safeFileName.endsWith(".mp4")) {
-    headers.set("Content-Type", "video/mp4");
-  } else if (safeFileName.endsWith(".wav")) {
-    headers.set("Content-Type", "audio/wav");
-  } else if (safeFileName.endsWith(".json")) {
-    headers.set("Content-Type", "application/json");
+  if (file === "production-report.json") {
+    if (!isTaskOutputDeliverable(task)) return taskNotFoundResponse();
+    const publicTask = toPublicTask(task);
+    return NextResponse.json(
+      {
+        taskId: publicTask.id,
+        createdAt: new Date(publicTask.createdAt).toISOString(),
+        completedAt:
+          publicTask.status === "completed"
+            ? new Date(publicTask.updatedAt).toISOString()
+            : undefined,
+        status: publicTask.status,
+        media: {
+          videoDuration: publicTask.results.videoDuration,
+          audioDuration: publicTask.results.audioDuration,
+          resolution: publicTask.results.resolution,
+          fps: publicTask.results.fps,
+          videoSha256: publicTask.results.sha256Video,
+          audioSha256: publicTask.results.sha256Audio,
+        },
+      },
+      {
+        headers: {
+          "Content-Disposition": 'attachment; filename="production-report.json"',
+          "Cache-Control": "private, no-store",
+        },
+      }
+    );
   }
-
-  const webStream = Readable.toWeb(fs.createReadStream(filePath));
-  return new NextResponse(webStream as ReadableStream, { headers });
+  return new NextResponse("File not found", { status: 404 });
 }

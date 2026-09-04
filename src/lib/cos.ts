@@ -6,6 +6,15 @@ import { getAppConfig } from "./config";
 let cosInstance: COS | null = null;
 let currentSecretId = "";
 let currentSecretKey = "";
+let storagePolicyPromise: Promise<void> | null = null;
+let storagePolicyIdentity = "";
+
+function isManagedMediaKey(key: string): boolean {
+  return (
+    /^uploads\/users\/[a-zA-Z0-9_-]+\/(?:videos|voices|thumbnails)\/[^/]+$/.test(key) ||
+    /^jobs\/[a-zA-Z0-9_-]+\/(?:source-video\.mp4|voice-track\.wav|final\.mp4|production-report\.json|exact-final-indextts\.wav|evidence\.json)$/.test(key)
+  );
+}
 
 function getCosClient(): COS | null {
   const config = getAppConfig();
@@ -46,9 +55,7 @@ export const CosService = {
     const cleanKey = key.replace(/^\/+/, "");
     const downloadName = filename || path.basename(cleanKey);
 
-    if (!cos || !config.cosBucket || !config.cosRegion) {
-      return this.getPublicUrl(cleanKey);
-    }
+    if (!cos || !config.cosBucket || !config.cosRegion) throw new Error("云端存储未配置");
 
     return new Promise((resolve, reject) => {
       cos.getObjectUrl(
@@ -64,11 +71,8 @@ export const CosService = {
           },
         },
         (err, data) => {
-          if (err || !data?.Url) {
-            resolve(this.getPublicUrl(cleanKey));
-          } else {
-            resolve(data.Url);
-          }
+          if (err || !data?.Url) return reject(new Error("无法生成私有下载地址"));
+          resolve(data.Url);
         }
       );
     });
@@ -84,10 +88,45 @@ export const CosService = {
     return `https://${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com/${cleanKey}`;
   },
 
+  getManagedObjectKey(source: string): string | null {
+    const config = getAppConfig();
+    let url: URL;
+    try {
+      url = new URL(source);
+    } catch {
+      return null;
+    }
+
+    const hosts = new Set<string>();
+    if (config.cosBucket && config.cosRegion) {
+      hosts.add(`${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com`.toLowerCase());
+    }
+    if (config.cosCustomDomain) {
+      try {
+        const custom = new URL(
+          config.cosCustomDomain.startsWith("http")
+            ? config.cosCustomDomain
+            : `https://${config.cosCustomDomain}`
+        );
+        hosts.add(custom.hostname.toLowerCase());
+      } catch {}
+    }
+    if (!hosts.has(url.hostname.toLowerCase())) return null;
+
+    let key: string;
+    try {
+      key = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    } catch {
+      return null;
+    }
+    if (!key || key.includes("..") || key.includes("\\")) return null;
+    return isManagedMediaKey(key) ? key : null;
+  },
+
   async getPresignedPutUrl(
     targetKey: string,
-    expires = 3600
-  ): Promise<{ presignedUrl: string; publicUrl: string; key: string }> {
+    options: { expires?: number; contentLength: number; contentType: string }
+  ): Promise<{ presignedUrl: string; key: string }> {
     const config = getAppConfig();
     const cos = getCosClient();
 
@@ -96,6 +135,7 @@ export const CosService = {
     }
 
     const cleanKey = targetKey.replace(/^\/+/, "");
+    await this.ensureBucketPrivateAndCors();
 
     return new Promise((resolve, reject) => {
       cos.getObjectUrl(
@@ -105,16 +145,18 @@ export const CosService = {
           Key: cleanKey,
           Method: "PUT",
           Sign: true,
-          Expires: expires,
+          Expires: options.expires || 900,
+          Headers: {
+            "Content-Length": String(options.contentLength),
+            "Content-Type": options.contentType,
+          },
         },
         (err, data) => {
           if (err || !data?.Url) {
             reject(new Error(`获取预签名上传地址失败: ${err?.message || "未知异常"}`));
           } else {
-            const publicUrl = this.getPublicUrl(cleanKey);
             resolve({
               presignedUrl: data.Url,
-              publicUrl,
               key: cleanKey,
             });
           }
@@ -140,6 +182,7 @@ export const CosService = {
     }
 
     const cleanKey = targetKey.replace(/^\/+/, "");
+    await this.ensureBucketPrivateAndCors();
 
     return new Promise((resolve, reject) => {
       cos.sliceUploadFile(
@@ -148,6 +191,7 @@ export const CosService = {
           Region: config.cosRegion,
           Key: cleanKey,
           FilePath: localFilePath,
+          ACL: "private",
           onProgress: (progressData) => {
             if (onProgress && progressData.percent) {
               onProgress(Math.round(progressData.percent * 100));
@@ -183,6 +227,7 @@ export const CosService = {
           Key: cleanKey,
           Body: Buffer.from(jsonStr, "utf-8"),
           ContentType: "application/json",
+          ACL: "private",
         },
         (err) => {
           if (err) {
@@ -245,6 +290,49 @@ export const CosService = {
     });
   },
 
+  async getObjectSize(key: string): Promise<number | null> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return null;
+
+    const cleanKey = key.replace(/^\/+/, "");
+    return new Promise((resolve) => {
+      cos.headObject(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+        },
+        (err, data) => {
+          if (err) return resolve(null);
+          const value = Number(
+            (data as any)?.headers?.["content-length"] ||
+            (data as any)?.headers?.["Content-Length"] ||
+            0
+          );
+          resolve(Number.isFinite(value) && value >= 0 ? value : null);
+        }
+      );
+    });
+  },
+
+  async deleteObject(key: string): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) return;
+    const cleanKey = key.replace(/^\/+/, "");
+    return new Promise((resolve, reject) => {
+      cos.deleteObject(
+        {
+          Bucket: config.cosBucket,
+          Region: config.cosRegion,
+          Key: cleanKey,
+        },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+  },
+
   async listFiles(prefix: string): Promise<{ key: string; size: number; lastModified: string }[]> {
     const config = getAppConfig();
     const cos = getCosClient();
@@ -274,6 +362,17 @@ export const CosService = {
     });
   },
 
+  async cleanupExpiredObjects(prefix: string, olderThanMs: number): Promise<number> {
+    const files = await this.listFiles(prefix);
+    const cutoff = Date.now() - olderThanMs;
+    const expired = files.filter((file) => {
+      const timestamp = Date.parse(file.lastModified);
+      return Number.isFinite(timestamp) && timestamp < cutoff;
+    });
+    await Promise.all(expired.map((file) => this.deleteObject(file.key)));
+    return expired.length;
+  },
+
   async testConnection(): Promise<{ success: boolean; message: string; buckets?: any[] }> {
     const cos = getCosClient();
     if (!cos) {
@@ -298,28 +397,64 @@ export const CosService = {
     });
   },
 
-  async ensureBucketPublicAndCors(): Promise<void> {
+  async ensureBucketPrivateAndCors(): Promise<void> {
     const config = getAppConfig();
     const cos = getCosClient();
     if (!cos || !config.cosBucket || !config.cosRegion) return;
 
-    return new Promise((resolve) => {
-      cos.putBucketCors(
-        {
-          Bucket: config.cosBucket,
-          Region: config.cosRegion,
-          CORSRules: [
+    const policyIdentity = `${config.cosBucket}:${config.cosRegion}:${config.publicBaseUrl}`;
+    if (storagePolicyIdentity !== policyIdentity) {
+      storagePolicyIdentity = policyIdentity;
+      storagePolicyPromise = null;
+    }
+
+    if (!storagePolicyPromise) {
+      const allowedOrigins = new Set<string>();
+      for (const value of [process.env.PUBLIC_APP_URL, config.publicBaseUrl]) {
+        if (!value) continue;
+        try {
+          allowedOrigins.add(new URL(value).origin);
+        } catch {}
+      }
+      if (process.env.NODE_ENV !== "production") {
+        allowedOrigins.add("http://localhost:3000");
+      }
+
+      storagePolicyPromise = Promise.all([
+        new Promise<void>((resolve, reject) => {
+          cos.putBucketAcl(
             {
-              AllowedOrigin: ["*"],
-              AllowedMethod: ["GET", "POST", "PUT", "DELETE", "HEAD"],
-              AllowedHeader: ["*"],
-              ExposeHeader: ["*"],
-              MaxAgeSeconds: 86400,
+              Bucket: config.cosBucket,
+              Region: config.cosRegion,
+              ACL: "private",
+            } as any,
+            (err) => (err ? reject(err) : resolve())
+          );
+        }),
+        new Promise<void>((resolve, reject) => {
+          cos.putBucketCors(
+            {
+              Bucket: config.cosBucket,
+              Region: config.cosRegion,
+              CORSRules: [
+                {
+                  AllowedOrigin: Array.from(allowedOrigins),
+                  AllowedMethod: ["GET", "PUT", "HEAD"],
+                  AllowedHeader: ["content-type", "content-length"],
+                  ExposeHeader: ["etag"],
+                  MaxAgeSeconds: 600,
+                },
+              ] as any,
             },
-          ] as any,
-        },
-        () => resolve()
-      );
-    });
+            (err) => (err ? reject(err) : resolve())
+          );
+        }),
+      ]).then(() => undefined).catch((error) => {
+        storagePolicyPromise = null;
+        throw error;
+      });
+    }
+
+    return storagePolicyPromise;
   },
 };

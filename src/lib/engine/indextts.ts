@@ -1,8 +1,9 @@
 import fs from "fs";
+import { downloadFileToDisk } from "./download-file";
+import { providerUrlPolicy } from "../server/outbound-url-policy";
 import path from "path";
 import crypto from "crypto";
-import { applyToneProfile, probeMedia } from "./ffmpeg";
-import { TaskStore } from "../store/task-store";
+import { applyToneProfile } from "./ffmpeg";
 
 export interface IndexTTSOptions {
   apiKey: string;
@@ -13,6 +14,7 @@ export interface IndexTTSOptions {
   toneProfile?: "low" | "high";
   outDir: string;
   onLog?: (msg: string) => void;
+  cacheScope?: string;
 }
 
 export interface IndexTTSResult {
@@ -31,9 +33,10 @@ function getCacheKey(
   speakerUrl: string,
   emotionUrl: string = "",
   intensity: number = 0.8,
-  toneProfile: string = "low"
+  toneProfile: string = "low",
+  cacheScope: string = "local"
 ): string {
-  const payload = `${text.trim()}|${speakerUrl}|${emotionUrl}|${intensity}|${toneProfile}`;
+  const payload = `${cacheScope}|${text.trim()}|${speakerUrl}|${emotionUrl}|${intensity}|${toneProfile}`;
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
@@ -50,6 +53,7 @@ export async function generateIndexTTS(
     toneProfile = "low",
     outDir,
     onLog = () => {},
+    cacheScope = "local",
   } = options;
 
   if (!apiKey) {
@@ -64,31 +68,32 @@ export async function generateIndexTTS(
 
   fs.mkdirSync(outDir, { recursive: true });
 
-  const rawWavPath = path.join(outDir, "raw-indextts.wav");
-  const finalWavPath = path.join(outDir, "exact-final-indextts.wav");
+  const rawWavPath = path.join(outDir, "voice-raw.wav");
+  const finalWavPath = path.join(outDir, "voice-track.wav");
   const cacheKey = getCacheKey(
     text,
     speakerAudioUrl,
     emotionAudioUrl,
     emotionIntensity,
-    toneProfile
+    toneProfile,
+    cacheScope
   );
 
-  const globalCacheDir = path.join(process.cwd(), "public", "jobs", "_tts_cache", cacheKey);
+  const globalCacheDir = path.join(process.cwd(), ".runtime", "tts-cache", cacheKey);
 
   // 1. Check Global TTS Cache
   if (
     fs.existsSync(globalCacheDir) &&
-    fs.existsSync(path.join(globalCacheDir, "exact-final-indextts.wav")) &&
+    fs.existsSync(path.join(globalCacheDir, "voice-track.wav")) &&
     fs.existsSync(path.join(globalCacheDir, "meta.json"))
   ) {
     try {
       const meta = JSON.parse(
         fs.readFileSync(path.join(globalCacheDir, "meta.json"), "utf-8")
       );
-      fs.copyFileSync(path.join(globalCacheDir, "raw-indextts.wav"), rawWavPath);
+      fs.copyFileSync(path.join(globalCacheDir, "voice-raw.wav"), rawWavPath);
       fs.copyFileSync(
-        path.join(globalCacheDir, "exact-final-indextts.wav"),
+        path.join(globalCacheDir, "voice-track.wav"),
         finalWavPath
       );
       onLog(
@@ -111,75 +116,7 @@ export async function generateIndexTTS(
     }
   }
 
-  // 2. Check Previous Task records with exact matching text & toneProfile
-  const allTasks = TaskStore.getAll();
-  for (const prevTask of allTasks) {
-    if (
-      prevTask.inputs &&
-      prevTask.inputs.scriptText?.trim() === text.trim() &&
-      prevTask.inputs.toneProfile === toneProfile
-    ) {
-      const prevJobDir = path.join(process.cwd(), "public", "jobs", prevTask.id);
-      const prevRaw = path.join(prevJobDir, "raw-indextts.wav");
-      const prevFinal = path.join(prevJobDir, "exact-final-indextts.wav");
-
-      if (fs.existsSync(prevFinal) && fs.statSync(prevFinal).size > 0) {
-        try {
-          fs.copyFileSync(
-            fs.existsSync(prevRaw) ? prevRaw : prevFinal,
-            rawWavPath
-          );
-          fs.copyFileSync(prevFinal, finalWavPath);
-
-          const probe = await probeMedia(finalWavPath);
-          const rate = toneProfile === "high" ? 1.2 : 1.0;
-          const selectedDuration = probe.durationSeconds;
-          const rawDuration = selectedDuration * rate;
-
-          // Save to global cache for future
-          fs.mkdirSync(globalCacheDir, { recursive: true });
-          fs.copyFileSync(rawWavPath, path.join(globalCacheDir, "raw-indextts.wav"));
-          fs.copyFileSync(
-            finalWavPath,
-            path.join(globalCacheDir, "exact-final-indextts.wav")
-          );
-          fs.writeFileSync(
-            path.join(globalCacheDir, "meta.json"),
-            JSON.stringify({
-              rawDuration,
-              selectedDuration,
-              toneProfile,
-              rate,
-              audioUrl: prevTask.results?.exactAudioUrl || "",
-              createdAt: Date.now(),
-            }),
-            "utf-8"
-          );
-
-          onLog(
-            `⚡ 命中已有任务 (${prevTask.inputs.videoName}) 的相同配音，跳过 IndexTTS-2 耗时生成，直接复用音频 (${selectedDuration.toFixed(
-              2
-            )}s)！`
-          );
-
-          return {
-            rawWavPath,
-            finalWavPath,
-            rawDuration,
-            selectedDuration,
-            toneProfile,
-            rate,
-            audioUrl: prevTask.results?.exactAudioUrl,
-            fromCache: true,
-          };
-        } catch (e: any) {
-          console.warn("Failed to reuse previous task audio:", e.message);
-        }
-      }
-    }
-  }
-
-  // 3. Cache Miss: Execute IndexTTS-2 Cloud Synthesis
+  // 2. Cache Miss: Execute cloud synthesis
   onLog(`正在向 302.AI 提交 IndexTTS-2 语音合成请求...`);
 
   const payload: Record<string, any> = {
@@ -258,12 +195,12 @@ export async function generateIndexTTS(
 
   onLog(`TTS 合成成功，正在下载音频文件...`);
 
-  const audioResp = await fetch(audioUrl);
-  if (!audioResp.ok) {
-    throw new Error(`下载 TTS 音频失败: ${audioResp.statusText}`);
-  }
-  const arrayBuffer = await audioResp.arrayBuffer();
-  fs.writeFileSync(rawWavPath, Buffer.from(arrayBuffer));
+  await downloadFileToDisk({
+    url: audioUrl,
+    outputPath: rawWavPath,
+    maxBytes: 100 * 1024 * 1024,
+    urlPolicy: providerUrlPolicy("indextts"),
+  });
 
   onLog(`音频下载完成，正在应用音调/语速配置文件 (${toneProfile})...`);
 
@@ -273,10 +210,10 @@ export async function generateIndexTTS(
   // Save to global cache
   try {
     fs.mkdirSync(globalCacheDir, { recursive: true });
-    fs.copyFileSync(rawWavPath, path.join(globalCacheDir, "raw-indextts.wav"));
+    fs.copyFileSync(rawWavPath, path.join(globalCacheDir, "voice-raw.wav"));
     fs.copyFileSync(
       finalWavPath,
-      path.join(globalCacheDir, "exact-final-indextts.wav")
+      path.join(globalCacheDir, "voice-track.wav")
     );
     fs.writeFileSync(
       path.join(globalCacheDir, "meta.json"),

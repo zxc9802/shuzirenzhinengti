@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getMainAppSessionCookieName,
+  createRestrictedGraceSession,
   isSsoConfigured,
+  isMainAppSessionWithinValidationGrace,
   readMainAppSessionCookie,
+  validateMainAppSessionDetails,
   type MainAppSession,
 } from "./main-app-sso";
 export {
@@ -29,6 +32,9 @@ export async function resolveAccessContext(
   req: NextRequest
 ): Promise<AccessContext> {
   if (!isSsoConfigured()) {
+    if (process.env.NODE_ENV === "production") {
+      return { isolated: true, userId: null, isAdmin: false, session: null };
+    }
     return { isolated: false, userId: null, isAdmin: true, session: null };
   }
 
@@ -38,11 +44,21 @@ export async function resolveAccessContext(
     return { isolated: true, userId: null, isAdmin: false, session: null };
   }
 
+  const validation = await validateMainAppSessionDetails(session);
+  const authoritativeSession = validation.status === "valid"
+    ? validation.session
+    : validation.status === "unavailable" && isMainAppSessionWithinValidationGrace(session)
+      ? createRestrictedGraceSession(session)
+      : null;
+  if (!authoritativeSession) {
+    return { isolated: true, userId: null, isAdmin: false, session: null };
+  }
+
   return {
     isolated: true,
-    userId: session.user.id,
-    isAdmin: session.user.role === "admin",
-    session,
+    userId: authoritativeSession.user.id,
+    isAdmin: authoritativeSession.user.role === "admin",
+    session: authoritativeSession,
   };
 }
 

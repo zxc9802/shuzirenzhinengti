@@ -3,9 +3,13 @@ import {
   getMainAppSessionCookieName,
   getMainAppSessionCookieOptions,
   getMainAppSsoLaunchUrl,
+  createMainAppSessionCookie,
+  createMainAppSsoIntent,
+  getMainAppSsoIntentCookieName,
+  getMainAppSsoIntentCookieOptions,
   isMainAppSessionWithinValidationGrace,
   readMainAppSessionCookie,
-  validateMainAppSession,
+  validateMainAppSessionDetails,
   isSsoConfigured,
 } from "@/lib/main-app-sso";
 
@@ -14,15 +18,31 @@ export const runtime = "nodejs";
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
+  if (
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname === "/mcp" ||
+    pathname.startsWith("/mcp/") ||
+    pathname === "/api/settings" ||
+    pathname.startsWith("/api/mcp/") ||
+    pathname === "/api/cos/test"
+  ) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const isPublicProcessingInput = /^\/jobs\/input\/[a-f0-9]{48}\/(?:source-video\.mp4|voice-track\.wav|speaker-reference\.(?:mp3|wav|m4a)|emotion-reference\.wav)$/.test(pathname);
+
+  if (pathname.startsWith("/jobs/") || pathname.startsWith("/uploads/")) {
+    return isPublicProcessingInput
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   // 1. Whitelist static files, SSO callback, and public endpoints
   if (
     pathname === "/api/sso/callback" ||
     pathname === "/api/sso/diagnose" ||
-    pathname.startsWith("/api/mcp/heygen/oauth/") ||
     pathname.startsWith("/_next/") ||
-    pathname.startsWith("/jobs/") ||
-    pathname.startsWith("/uploads/") ||
-    pathname.startsWith("/api/tasks/") && pathname.includes("/download/") ||
     pathname === "/favicon.ico" ||
     pathname.endsWith(".svg") ||
     pathname.endsWith(".png") ||
@@ -34,6 +54,17 @@ export async function middleware(request: NextRequest) {
 
   // 2. If SSO is not enabled/configured (e.g. local dev mode without secrets), allow through
   if (!isSsoConfigured()) {
+    if (process.env.NODE_ENV === "production") {
+      return request.nextUrl.pathname.startsWith("/api/")
+        ? NextResponse.json(
+            { error: "Authentication service is not configured." },
+            { status: 503, headers: { "Cache-Control": "no-store" } }
+          )
+        : new NextResponse("Authentication service is not configured.", {
+            status: 503,
+            headers: { "Cache-Control": "no-store" },
+          });
+    }
     return NextResponse.next();
   }
 
@@ -43,15 +74,18 @@ export async function middleware(request: NextRequest) {
   if (cookieValue && !session) {
     console.error("[SSO] Local session cookie could not be decrypted or was expired.");
   }
-  const sessionValidation = session
-    ? await validateMainAppSession(session)
-    : "invalid";
+  const validation = session
+    ? await validateMainAppSessionDetails(session)
+    : { status: "invalid" as const, session: null };
+  const sessionValidation = validation.status;
 
-  if (session && sessionValidation === "valid") {
-    // Session is valid
+  if (session && validation.status === "valid") {
     const response = NextResponse.next();
-    response.headers.set("x-user-id", session.user.id);
-    response.headers.set("x-user-account", session.user.account);
+    response.cookies.set(
+      getMainAppSessionCookieName(),
+      await createMainAppSessionCookie(validation.session),
+      getMainAppSessionCookieOptions(validation.session.expiresAt),
+    );
     return response;
   }
 
@@ -59,8 +93,6 @@ export async function middleware(request: NextRequest) {
   if (sessionValidation === "unavailable") {
     if (session && isMainAppSessionWithinValidationGrace(session)) {
       const response = NextResponse.next();
-      response.headers.set("x-user-id", session.user.id);
-      response.headers.set("x-user-account", session.user.account);
       response.headers.set("x-sso-validation", "grace");
       return response;
     }
@@ -102,11 +134,17 @@ export async function middleware(request: NextRequest) {
   }
 
   // 6. Page route: redirect to main app launch URL
-  const response = NextResponse.redirect(getMainAppSsoLaunchUrl());
+  const intent = await createMainAppSsoIntent();
+  const response = NextResponse.redirect(getMainAppSsoLaunchUrl(intent.state));
   response.cookies.set(getMainAppSessionCookieName(), "", {
     ...getMainAppSessionCookieOptions(),
     maxAge: 0,
   });
+  response.cookies.set(
+    getMainAppSsoIntentCookieName(),
+    intent.cookieValue,
+    getMainAppSsoIntentCookieOptions(intent.expiresAt),
+  );
   return response;
 }
 

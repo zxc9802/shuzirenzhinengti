@@ -4,8 +4,9 @@ import {
   getMainAppSessionCookieOptions,
   isMainAppSessionWithinValidationGrace,
   readMainAppSessionCookie,
-  validateMainAppSession,
-  fetchMainAppUserProfile,
+  validateMainAppSessionDetails,
+  createRestrictedGraceSession,
+  createMainAppSessionCookie,
   isSsoConfigured,
 } from "@/lib/main-app-sso";
 import {
@@ -42,27 +43,24 @@ export async function GET(request: NextRequest) {
   const session = await readMainAppSessionCookie(
     request.cookies.get(getMainAppSessionCookieName())?.value,
   );
-  const sessionValidation = session
-    ? await validateMainAppSession(session)
-    : "invalid";
+  const validation = session
+    ? await validateMainAppSessionDetails(session)
+    : { status: "invalid" as const, session: null };
+  const sessionValidation = validation.status;
   const usesValidationGrace = Boolean(
     session &&
     sessionValidation === "unavailable" &&
     isMainAppSessionWithinValidationGrace(session),
   );
 
-  if (session && (sessionValidation === "valid" || usesValidationGrace)) {
-    // Try to fetch latest live points balance from main app
-    const liveProfile = usesValidationGrace
-      ? null
-      : await fetchMainAppUserProfile(session.token);
-    const user = {
-      ...session.user,
-      ...liveProfile,
-    };
+  if (session && (validation.status === "valid" || usesValidationGrace)) {
+    const currentSession = validation.status === "valid"
+      ? validation.session
+      : createRestrictedGraceSession(session);
+    const user = currentSession.user;
     const isExternal = isExternallyBilledUser(user);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         user,
@@ -74,6 +72,14 @@ export async function GET(request: NextRequest) {
         ssoValidation: usesValidationGrace ? "grace" : "valid",
       },
     });
+    if (validation.status === "valid") {
+      response.cookies.set(
+        getMainAppSessionCookieName(),
+        await createMainAppSessionCookie(currentSession),
+        getMainAppSessionCookieOptions(currentSession.expiresAt),
+      );
+    }
+    return response;
   }
 
   if (sessionValidation === "unavailable") {

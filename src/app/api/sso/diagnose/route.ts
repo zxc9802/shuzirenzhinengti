@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import {
   getMainAppSessionCookieName,
   getMainAppSsoLaunchUrl,
@@ -47,11 +48,21 @@ async function probeJson(
 
 export async function GET(req: NextRequest) {
   const expected = process.env.SSO_DIAGNOSE_TOKEN?.trim();
-  const provided =
-    req.nextUrl.searchParams.get("token")?.trim() ||
-    req.headers.get("x-diagnose-token")?.trim();
-  if (!expected || !provided || provided !== expected) {
-    return new NextResponse("Not Found", { status: 404 });
+  const authorization = req.headers.get("Authorization")?.trim() || "";
+  const provided = authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : req.headers.get("x-diagnose-token")?.trim() || "";
+  const expectedBytes = Buffer.from(expected || "");
+  const providedBytes = Buffer.from(provided);
+  if (
+    !expected ||
+    expectedBytes.length !== providedBytes.length ||
+    !timingSafeEqual(expectedBytes, providedBytes)
+  ) {
+    return new NextResponse("Not Found", {
+      status: 404,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 
   const ssoConfigured = isSsoConfigured();

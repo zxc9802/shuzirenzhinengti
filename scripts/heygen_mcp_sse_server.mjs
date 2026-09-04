@@ -7,6 +7,7 @@
  */
 
 import http from "http";
+import { timingSafeEqual } from "crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
@@ -15,9 +16,38 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const PORT = Number(process.env.PORT || process.env.MCP_PORT || 8000);
+const HOST = process.env.MCP_SSE_HOST?.trim() || "127.0.0.1";
+const MCP_SSE_AUTH_TOKEN = process.env.MCP_SSE_AUTH_TOKEN?.trim() || "";
+const ALLOWED_ORIGINS = new Set(
+  (process.env.MCP_SSE_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
 const HEYGEN_API_KEY = process.env.HEYGEN_API_KEY || "";
 const HEYGEN_API_BASE_URL = (process.env.HEYGEN_API_BASE_URL || "https://api.heygen.com").replace(/\/$/, "");
+const MAX_PAID_CALLS_PER_HOUR = Math.max(
+  1,
+  Number(process.env.MCP_MAX_PAID_CALLS_PER_HOUR || 10),
+);
+let paidCallWindowStartedAt = Date.now();
+let paidCallsInWindow = 0;
 
+if (!MCP_SSE_AUTH_TOKEN) throw new Error("MCP_SSE_AUTH_TOKEN is required");
+if (!HEYGEN_API_KEY) throw new Error("HEYGEN_API_KEY is required");
+
+function consumePaidCallBudget(now = Date.now()) {
+  if (now - paidCallWindowStartedAt >= 60 * 60_000) {
+    paidCallWindowStartedAt = now;
+    paidCallsInWindow = 0;
+  }
+  if (paidCallsInWindow >= MAX_PAID_CALLS_PER_HOUR) {
+    throw new Error("Paid tool rate limit exceeded");
+  }
+  paidCallsInWindow += 1;
+}
+
+function createMcpServer() {
 const mcpServer = new Server(
   {
     name: "heygen-precision-mcp-server",
@@ -81,7 +111,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
 // Tools Handlers
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const apiKey = HEYGEN_API_KEY || (args && args.api_key) || "";
+  const apiKey = HEYGEN_API_KEY;
 
   if (name === "create_lipsync" || name === "heygen_create_lipsync") {
     const videoUrl = args?.video_url;
@@ -94,6 +124,13 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!apiKey) {
       throw new Error("Missing HEYGEN_API_KEY in MCP server environment");
     }
+    for (const source of [videoUrl, audioUrl]) {
+      const parsed = new URL(source);
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+        throw new Error("Media URLs must be credential-free HTTPS");
+      }
+    }
+    consumePaidCallBudget();
 
     const payload = {
       video_url: videoUrl,
@@ -116,6 +153,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      redirect: "error",
     });
 
     const data = await resp.json();
@@ -153,6 +191,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     const resp = await fetch(`${HEYGEN_API_BASE_URL}/v1/video_status.get?video_id=${lipsyncId}`, {
       headers: { "X-Api-Key": apiKey },
+      redirect: "error",
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(`HeyGen Error: ${data.message || JSON.stringify(data)}`);
@@ -178,6 +217,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!apiKey) throw new Error("Missing HEYGEN_API_KEY");
     const resp = await fetch(`${HEYGEN_API_BASE_URL}/v1/user/remaining_quota`, {
       headers: { "X-Api-Key": apiKey },
+      redirect: "error",
     });
     const data = await resp.json();
     return {
@@ -199,15 +239,38 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error(`Unknown tool: ${name}`);
 });
 
-let transport = null;
+return mcpServer;
+}
+
+const transports = new Map();
+const MAX_SESSIONS = 20;
+
+function isAuthorized(req) {
+  const value = req.headers.authorization || "";
+  const expected = `Bearer ${MCP_SSE_AUTH_TOKEN}`;
+  const actualBuffer = Buffer.from(value);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    return true;
+  }
+  return !origin;
+}
 
 const httpServer = http.createServer(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "*");
+  const corsAllowed = applyCors(req, res);
 
   if (req.method === "OPTIONS") {
-    res.writeHead(200);
+    res.writeHead(corsAllowed ? 204 : 403);
     res.end();
     return;
   }
@@ -215,14 +278,34 @@ const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
   if (url.pathname === "/sse") {
-    transport = new SSEServerTransport("/message", res);
+    if (!corsAllowed || !isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    if (transports.size >= MAX_SESSIONS) {
+      res.writeHead(429, { "Retry-After": "5", "Cache-Control": "no-store" });
+      res.end("Too many sessions");
+      return;
+    }
+    const transport = new SSEServerTransport("/message", res);
+    const mcpServer = createMcpServer();
+    transports.set(transport.sessionId, { transport, mcpServer });
+    res.once("close", () => transports.delete(transport.sessionId));
     await mcpServer.connect(transport);
     return;
   }
 
   if (url.pathname === "/message") {
-    if (transport) {
-      await transport.handlePostMessage(req, res);
+    if (!corsAllowed || !isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    const sessionId = url.searchParams.get("sessionId") || "";
+    const active = transports.get(sessionId);
+    if (active) {
+      await active.transport.handlePostMessage(req, res);
     } else {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "No active SSE connection" }));
@@ -250,7 +333,7 @@ const httpServer = http.createServer(async (req, res) => {
   res.end("Not Found");
 });
 
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 HeyGen Precision MCP SSE Server running at http://0.0.0.0:${PORT}`);
-  console.log(`   SSE Endpoint: http://0.0.0.0:${PORT}/sse`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`🚀 HeyGen Precision MCP SSE Server running at http://${HOST}:${PORT}`);
+  console.log(`   SSE Endpoint: http://${HOST}:${PORT}/sse`);
 });

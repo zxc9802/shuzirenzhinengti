@@ -46,7 +46,7 @@ test("shuziren SSO tolerates main-site cold starts without creating a login loop
   assert.match(sso, /validatedAt: number/);
   assert.match(sso, /isMainAppSessionWithinValidationGrace/);
   assert.match(sso, /\|\s*"valid"\s*\|\s*"invalid"\s*\|\s*"unavailable"/);
-  assert.match(sso, /return "unavailable"/);
+  assert.match(sso, /status: "unavailable"/);
 
   assert.match(callback, /Cache-Control["']?,\s*["']private, no-store["']/);
 

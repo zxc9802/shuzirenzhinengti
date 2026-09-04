@@ -2,11 +2,11 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal, Copy, Check, Trash2, ArrowDown, Activity } from "lucide-react";
-import { LogEntry } from "@/lib/store/task-store";
+import type { PublicLogEntry } from "@/lib/public-contract";
 import { cn } from "@/lib/utils";
 
 interface TaskTerminalProps {
-  logs: LogEntry[];
+  logs: PublicLogEntry[];
   onClear?: () => void;
 }
 

@@ -1,13 +1,13 @@
 const PRODUCT = "shuziren";
 const COOKIE_NAME = "qycm_shuziren_sso_v2";
+const INTENT_COOKIE_NAME = "qycm_shuziren_sso_intent_v1";
 const MAIN_APP_URL_FALLBACK = "https://www.qycm.top";
 const PUBLIC_SHUZIREN_APP_URL = "https://shuziren.qycm.top";
 const SSO_EXCHANGE_TIMEOUT_MS = 30_000;
 const SSO_SESSION_VALIDATION_TIMEOUT_MS = 20_000;
-const SESSION_VALIDATION_CACHE_MS = 30_000;
 const SESSION_VALIDATION_GRACE_MS = 5 * 60_000;
 const SESSION_CLOCK_SKEW_MS = 60_000;
-const sessionValidationCache = new Map<string, number>();
+const SSO_INTENT_TTL_MS = 10 * 60_000;
 
 export type MainAppUser = {
   id: string;
@@ -32,6 +32,16 @@ export type MainAppSessionValidationResult =
   | "valid"
   | "invalid"
   | "unavailable";
+
+export type MainAppSessionValidationDetails =
+  | { status: "valid"; session: MainAppSession }
+  | { status: "invalid"; session: null }
+  | { status: "unavailable"; session: null };
+
+type MainAppSsoIntent = {
+  state: string;
+  expiresAt: number;
+};
 
 type ExchangeResponse = {
   success?: boolean;
@@ -64,10 +74,12 @@ function base64UrlEncode(value: Uint8Array): string {
 
 function base64UrlDecode(value: string): Uint8Array | null {
   try {
+    if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
     const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
     const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
     const binary = atob(padded);
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const decoded = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return base64UrlEncode(decoded) === value ? decoded : null;
   } catch {
     return null;
   }
@@ -136,14 +148,31 @@ export function getPublicShuzirenAppUrl(): string {
   return process.env.PUBLIC_APP_URL?.trim() || PUBLIC_SHUZIREN_APP_URL;
 }
 
-export function getMainAppSsoLaunchUrl(): string {
+export function getMainAppSsoLaunchUrl(state?: string): string {
   const url = new URL("/home2", getMainAppUrl());
   url.searchParams.set("externalSso", PRODUCT);
+  if (state) url.searchParams.set("state", state);
   return url.toString();
 }
 
 export function getMainAppSessionCookieName(): string {
   return COOKIE_NAME;
+}
+
+export function getMainAppSsoIntentCookieName(): string {
+  return INTENT_COOKIE_NAME;
+}
+
+export function getMainAppSsoIntentCookieOptions(expiresAt?: number) {
+  return {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax" as const,
+    path: "/api/sso/callback",
+    maxAge: expiresAt
+      ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+      : 0,
+  };
 }
 
 export function getMainAppSessionCookieOptions(expiresAt?: number) {
@@ -164,11 +193,24 @@ export function safeRedirectPath(value: unknown): string {
   if (
     !redirectPath ||
     !redirectPath.startsWith("/") ||
-    redirectPath.startsWith("//")
+    redirectPath.startsWith("//") ||
+    redirectPath.includes("\\") ||
+    /[\u0000-\u001f\u007f]/.test(redirectPath)
   ) {
     return "/";
   }
-  return redirectPath;
+  try {
+    const parsed = new URL(redirectPath, "https://local.invalid");
+    if (
+      parsed.origin !== "https://local.invalid" ||
+      decodeURIComponent(parsed.pathname).includes("\\")
+    ) {
+      return "/";
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/";
+  }
 }
 
 export async function createMainAppSessionCookie(
@@ -183,6 +225,66 @@ export async function createMainAppSessionCookie(
   return `v2.${base64UrlEncode(iv)}.${base64UrlEncode(
     new Uint8Array(encrypted),
   )}`;
+}
+
+async function sealIntent(intent: MainAppSsoIntent): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: toArrayBuffer(iv) },
+    await sessionKey(),
+    toArrayBuffer(new TextEncoder().encode(JSON.stringify(intent))),
+  );
+  return `i1.${base64UrlEncode(iv)}.${base64UrlEncode(new Uint8Array(encrypted))}`;
+}
+
+export async function createMainAppSsoIntent(): Promise<{
+  state: string;
+  cookieValue: string;
+  expiresAt: number;
+}> {
+  const state = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const expiresAt = Date.now() + SSO_INTENT_TTL_MS;
+  return {
+    state,
+    expiresAt,
+    cookieValue: await sealIntent({ state, expiresAt }),
+  };
+}
+
+export async function validateMainAppSsoIntent(
+  value: string | undefined,
+  returnedState: string | undefined,
+): Promise<boolean> {
+  if (!value || !returnedState) return false;
+  const [version, ivValue, encryptedValue, extra] = value.split(".");
+  if (version !== "i1" || !ivValue || !encryptedValue || extra) return false;
+  const iv = base64UrlDecode(ivValue);
+  const encrypted = base64UrlDecode(encryptedValue);
+  if (!iv || !encrypted) return false;
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: toArrayBuffer(iv) },
+      await sessionKey(),
+      toArrayBuffer(encrypted),
+    );
+    const intent = JSON.parse(new TextDecoder().decode(decrypted)) as MainAppSsoIntent;
+    if (
+      typeof intent.state !== "string" ||
+      typeof intent.expiresAt !== "number" ||
+      !Number.isFinite(intent.expiresAt) ||
+      intent.expiresAt <= Date.now()
+    ) return false;
+    const expected = new TextEncoder().encode(intent.state);
+    const actual = new TextEncoder().encode(returnedState);
+    if (expected.byteLength !== actual.byteLength) return false;
+    let difference = 0;
+    for (let index = 0; index < expected.byteLength; index += 1) {
+      difference |= expected[index] ^ actual[index];
+    }
+    return difference === 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function readMainAppSessionCookie(
@@ -259,16 +361,9 @@ export async function exchangeMainAppSsoTicket(
   };
 }
 
-export async function validateMainAppSession(
+export async function validateMainAppSessionDetails(
   session: MainAppSession,
-): Promise<MainAppSessionValidationResult> {
-  const now = Date.now();
-  const cacheKey = await sessionValidationCacheKey(session.token);
-  for (const [key, expiresAt] of sessionValidationCache) {
-    if (expiresAt <= now) sessionValidationCache.delete(key);
-  }
-  if ((sessionValidationCache.get(cacheKey) ?? 0) > now) return "valid";
-
+): Promise<MainAppSessionValidationDetails> {
   const probeUrl = `${getMainAppUrl()}/api/sso/session`;
   try {
     const response = await fetch(probeUrl, {
@@ -277,38 +372,58 @@ export async function validateMainAppSession(
       signal: AbortSignal.timeout(SSO_SESSION_VALIDATION_TIMEOUT_MS),
     });
     if (response.ok) {
-      sessionValidationCache.set(
-        cacheKey,
-        Math.min(session.expiresAt, Date.now() + SESSION_VALIDATION_CACHE_MS),
-      );
-      return "valid";
+      const payload = await response.json().catch(() => null);
+      const user = payload?.data?.user;
+      if (payload?.success !== true || !isMainAppUser(user)) {
+        console.error("[SSO] Session validation response omitted authoritative user claims.");
+        return { status: "invalid", session: null };
+      }
+      const refreshedSession: MainAppSession = {
+        ...session,
+        user,
+        validatedAt: Date.now(),
+      };
+      return { status: "valid", session: refreshedSession };
     }
     if (response.status === 401 || response.status === 403) {
       console.error(
         `[SSO] Session validation rejected by main site: HTTP ${response.status} url=${probeUrl}`
       );
-      return "invalid";
+      return { status: "invalid", session: null };
     }
 
     console.error(
       `[SSO] Session validation unavailable: HTTP ${response.status} url=${probeUrl}`
     );
-    return "unavailable";
+    return { status: "unavailable", session: null };
   } catch (err: any) {
     // 出网失败 / DNS / 超时不等于凭证失效，调用方必须避免清 Cookie 重登。
     console.error(
       `[SSO] Session validation request failed: ${err?.message || err} url=${probeUrl}`
     );
-    return "unavailable";
+    return { status: "unavailable", session: null };
   }
 }
 
-async function sessionValidationCacheKey(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(token),
-  );
-  return base64UrlEncode(new Uint8Array(digest));
+export async function validateMainAppSession(
+  session: MainAppSession,
+): Promise<MainAppSessionValidationResult> {
+  return (await validateMainAppSessionDetails(session)).status;
+}
+
+export function createRestrictedGraceSession(
+  session: MainAppSession,
+): MainAppSession {
+  return {
+    ...session,
+    user: {
+      id: session.user.id,
+      account: "",
+      nickname: session.user.nickname,
+      role: "member",
+      billingAudience: "external",
+    },
+  };
 }
 
 export async function fetchMainAppUserProfile(
@@ -322,7 +437,7 @@ export async function fetchMainAppUserProfile(
     });
     if (!response.ok) return null;
     const payload = await response.json();
-    return (payload?.data?.user as Partial<MainAppUser>) || null;
+    return isMainAppUser(payload?.data?.user) ? payload.data.user : null;
   } catch {
     return null;
   }

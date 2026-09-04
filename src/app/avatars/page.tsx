@@ -23,9 +23,9 @@ import {
   Camera,
   Sparkles,
 } from "lucide-react";
-import { AvatarItem } from "@/lib/store/avatar-store";
+import type { PublicAvatarItem } from "@/lib/public-contract";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
-import { uploadFileDirectToCos } from "@/lib/client-cos-upload";
+import { uploadMediaFile } from "@/lib/client-media-upload";
 
 // Sub-component for individual avatar card item with resilient cover display and hover preview
 function AvatarCardItem({
@@ -34,9 +34,9 @@ function AvatarCardItem({
   onUse,
   onCoverUpdated,
 }: {
-  avatar: AvatarItem;
+  avatar: PublicAvatarItem;
   onDelete: (id: string, e: React.MouseEvent) => void;
-  onUse: (avatar: AvatarItem) => void;
+  onUse: (avatar: PublicAvatarItem) => void;
   onCoverUpdated: (newCoverUrl: string) => void;
 }) {
   const [isExtracting, setIsExtracting] = useState(false);
@@ -155,7 +155,7 @@ function AvatarCardItem({
 
         {/* Top Badges */}
         <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">
-          {avatar.isCos ? (
+          {avatar.storedRemotely ? (
             <span className="flex items-center gap-1 rounded-md bg-blue-600/90 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
               <Cloud className="h-3 w-3" /> 云端存储
             </span>
@@ -255,7 +255,7 @@ function AvatarCardItem({
 
 export default function AvatarsPage() {
   const router = useRouter();
-  const [avatars, setAvatars] = useState<AvatarItem[]>([]);
+  const [avatars, setAvatars] = useState<PublicAvatarItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -361,7 +361,7 @@ export default function AvatarsPage() {
 
     try {
       // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
-      const videoResult = await uploadFileDirectToCos(
+      const videoResult = await uploadMediaFile(
         uploadFile,
         uploadFile.name,
         "videos",
@@ -369,15 +369,15 @@ export default function AvatarsPage() {
       );
 
       // 2. Direct upload client-captured thumbnail if available
-      let coverUrl = "";
+      let coverKey = "";
       if (clientThumbBlob) {
         try {
-          const thumbResult = await uploadFileDirectToCos(
+          const thumbResult = await uploadMediaFile(
             clientThumbBlob,
             `${uploadFile.name.replace(/\.[^/.]+$/, "")}_thumb.jpg`,
             "thumbnails"
           );
-          coverUrl = thumbResult.fileUrl;
+          coverKey = thumbResult.uploadKey;
         } catch {}
       }
 
@@ -392,14 +392,13 @@ export default function AvatarsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: displayName,
-          videoUrl: videoResult.fileUrl,
-          coverUrl,
+          uploadKey: videoResult.uploadKey,
+          coverKey,
           durationSeconds: 0,
           width: 1080,
           height: 1920,
           fps: 30,
           fileSize: uploadFile.size,
-          isCos: videoResult.isCos,
         }),
       });
 
@@ -438,25 +437,8 @@ export default function AvatarsPage() {
     }
   };
 
-  const handleUseAvatar = (avatar: AvatarItem) => {
-    localStorage.setItem(
-      "preselected_avatar",
-      JSON.stringify({
-        id: avatar.id,
-        name: avatar.name,
-        path: avatar.videoPath,
-        url: avatar.videoUrl,
-        size: avatar.fileSize,
-        isCos: avatar.isCos,
-        probe: {
-          width: avatar.width,
-          height: avatar.height,
-          durationSeconds: avatar.durationSeconds,
-          fps: avatar.fps || 30,
-          hasAudio: true,
-        },
-      })
-    );
+  const handleUseAvatar = (avatar: PublicAvatarItem) => {
+    localStorage.setItem("preselected_avatar_id", avatar.id);
     router.push("/");
   };
 

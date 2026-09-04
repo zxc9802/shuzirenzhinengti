@@ -2,6 +2,10 @@ import path from "path";
 import { getAppConfig } from "../config";
 import { CosService } from "../cos";
 import { downloadFileToDisk } from "./download-file";
+import {
+  exactHostUrlPolicy,
+  providerUrlPolicy,
+} from "../server/outbound-url-policy";
 
 const RELAY_HOSTS = ["pixverseai.cn", "openlux.ai"];
 
@@ -21,7 +25,7 @@ export function cosKeyFromJobOutput(outputPath: string): string {
   if (index >= 0) {
     return normalized.slice(index + 1);
   }
-  return `jobs/relay/${Date.now()}-${path.basename(outputPath)}`;
+  return `jobs/relay-${Date.now()}/rendered-source.mp4`;
 }
 
 export async function ingestViaGuangzhouRelay(params: {
@@ -84,6 +88,9 @@ export async function downloadPixverseResult(params: {
         url: pullUrl,
         outputPath,
         onProgress: (msg) => onLog(`[PixVerse] 正在从 COS 拉取 ${msg}`),
+        urlPolicy: CosService.isConfigured()
+          ? exactHostUrlPolicy(pullUrl, "cos")
+          : providerUrlPolicy("pixverse"),
       });
       return { bytes: downloaded.bytes, viaRelay: true };
     } catch (err: any) {
@@ -95,6 +102,7 @@ export async function downloadPixverseResult(params: {
     url,
     outputPath,
     onProgress: (msg) => onLog(`[PixVerse] 正在拉取成片 ${msg}`),
+    urlPolicy: providerUrlPolicy("pixverse"),
   });
   return { bytes: downloaded.bytes, viaRelay: false };
 }

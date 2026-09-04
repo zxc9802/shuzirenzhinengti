@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CosService } from "@/lib/cos";
+import fs from "fs";
+import path from "path";
+import { getAppConfig } from "@/lib/config";
 import { recoverStuckLipsyncTask } from "@/lib/engine/recover-lipsync";
 import { TaskStore } from "@/lib/store/task-store";
+import { toPublicTask } from "@/lib/server/public-data";
 import {
   canAccessTask,
   resolveAccessContext,
@@ -39,14 +43,14 @@ export async function GET(
     try {
       const hasFinal = await CosService.objectExists(`jobs/${id}/final.mp4`);
       if (hasFinal) {
-        task = await recoverStuckLipsyncTask(id);
+        task = await recoverStuckLipsyncTask(id, access.session?.token);
       }
     } catch (err) {
       console.warn("Auto-recover from COS skipped:", err);
     }
   }
 
-  return NextResponse.json({ task });
+  return NextResponse.json({ task: toPublicTask(task) });
 }
 
 export async function DELETE(
@@ -65,5 +69,11 @@ export async function DELETE(
   }
 
   const deleted = TaskStore.delete(id);
+  const localJobDir = path.join(getAppConfig().storageDir, id);
+  fs.rmSync(localJobDir, { recursive: true, force: true });
+  if (CosService.isConfigured()) {
+    const files = await CosService.listFiles(`jobs/${id}/`);
+    await Promise.all(files.map((file) => CosService.deleteObject(file.key).catch(() => undefined)));
+  }
   return NextResponse.json({ success: deleted });
 }

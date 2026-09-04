@@ -39,8 +39,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src ./src
 
-# Create volume directories
-RUN mkdir -p /app/public/jobs /app/public/uploads
+# Create private runtime directories
+RUN mkdir -p /app/.runtime/jobs /app/.runtime/uploads /app/.runtime/provider-input
 
 EXPOSE 3000
 

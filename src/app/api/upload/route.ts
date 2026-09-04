@@ -1,144 +1,111 @@
-import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
-import { Readable } from "stream";
-import { probeMedia, extractVideoThumbnail } from "@/lib/engine/ffmpeg";
+import { NextRequest, NextResponse } from "next/server";
 import { CosService } from "@/lib/cos";
-import { AvatarStore } from "@/lib/store/avatar-store";
 import {
-  resolveAccessContext,
-  unauthorizedResponse,
-} from "@/lib/access-control";
+  localUploadPath,
+  ownerKeyFor,
+  consumeUploadGrantBudget,
+  reservePendingUpload,
+  markPendingUploadStored,
+  cancelPendingUpload,
+  cleanupExpiredPendingUploads,
+  cleanupPendingOwnedUploadDeletions,
+  type UploadFolder,
+  validateUploadDescriptor,
+} from "@/lib/server/upload-policy";
+import { resolveAccessContext, unauthorizedResponse } from "@/lib/access-control";
+
+const ALLOWED_FOLDERS = new Set<UploadFolder>(["videos", "voices", "thumbnails"]);
 
 export async function POST(req: NextRequest) {
+  let outputPath = "";
+  let uploadKey = "";
   try {
     const access = await resolveAccessContext(req);
     if (access.isolated && !access.userId) return unauthorizedResponse();
-    const ownerKey = (access.userId || "local").replace(/[^a-zA-Z0-9_-]/g, "_");
 
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const avatarName = (formData.get("name") as string)?.trim();
-
-    if (!file) {
-      return NextResponse.json({ error: "未检测到上传文件" }, { status: 400 });
+    const folderValue = req.nextUrl.searchParams.get("folder") || "videos";
+    const fileName = req.nextUrl.searchParams.get("fileName") || "";
+    const contentType = req.headers.get("content-type") || "application/octet-stream";
+    const fileSize = Number(req.headers.get("content-length") || 0);
+    if (!ALLOWED_FOLDERS.has(folderValue as UploadFolder)) {
+      return NextResponse.json({ error: "上传参数无效" }, { status: 400 });
+    }
+    if (!fileSize) {
+      return NextResponse.json({ error: "Content-Length 必填" }, { status: 411 });
+    }
+    const folder = folderValue as UploadFolder;
+    const validationError = validateUploadDescriptor({
+      folder,
+      fileName,
+      contentType,
+      fileSize,
+    });
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
+    if (!consumeUploadGrantBudget(access.userId, fileSize)) {
+      return NextResponse.json({ error: "上传频率或容量超过当前时间窗限制" }, { status: 429 });
+    }
+    await cleanupExpiredPendingUploads();
+    await cleanupPendingOwnedUploadDeletions().catch(() => undefined);
+    if (!req.body) {
+      return NextResponse.json({ error: "上传内容为空" }, { status: 400 });
     }
 
-    const uploadsDir = path.join(
-      process.cwd(),
-      "public",
-      "uploads",
-      "users",
-      ownerKey,
-      "videos"
+    const safeName = `${crypto.randomUUID()}${path.extname(fileName).toLowerCase()}`;
+    uploadKey = `uploads/users/${ownerKeyFor(access.userId)}/${folder}/${safeName}`;
+    if (!reservePendingUpload({
+      key: uploadKey,
+      userId: access.userId,
+      folder,
+      bytes: fileSize,
+    })) {
+      return NextResponse.json({ error: "待认领上传容量已满" }, { status: 429 });
+    }
+    outputPath = localUploadPath(uploadKey);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+    let received = 0;
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        received += chunk.length;
+        callback(received > fileSize ? new Error("上传内容超过声明大小") : null, chunk);
+      },
+    });
+    await pipeline(
+      Readable.fromWeb(req.body as never),
+      limiter,
+      fs.createWriteStream(outputPath)
     );
-    fs.mkdirSync(uploadsDir, { recursive: true });
-
-    const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-    const filePath = path.join(uploadsDir, safeName);
-
-    // Fast streaming write to disk
-    const nodeReadable = Readable.fromWeb(file.stream() as any);
-    const writeStream = fs.createWriteStream(filePath);
-    await pipeline(nodeReadable, writeStream);
-
-    let fileUrl = `/uploads/users/${ownerKey}/videos/${safeName}`;
-    let coverUrl = "";
-    let isCos = false;
-
-    // Check media info
-    let probe: any = null;
-    try {
-      probe = await probeMedia(filePath);
-    } catch (e: any) {
-      console.warn("Probe warning for uploaded file:", e.message);
+    if (received !== fileSize) {
+      throw new Error("上传内容大小与声明不一致");
     }
 
-    const baseName = safeName.replace(/\.[^/.]+$/, "");
-    const thumbFileName = `${baseName}_thumb.jpg`;
-    const thumbPath = path.join(uploadsDir, thumbFileName);
-
-    // 1. Check if client sent pre-captured thumbnail from canvas
-    const clientThumb = formData.get("thumbnail") as File | null;
-    if (clientThumb) {
-      try {
-        const clientThumbBuffer = Buffer.from(await clientThumb.arrayBuffer());
-        if (clientThumbBuffer.length > 500) {
-          fs.writeFileSync(thumbPath, clientThumbBuffer);
-          coverUrl = `/uploads/users/${ownerKey}/videos/${thumbFileName}`;
-        }
-      } catch (clientThumbErr: any) {
-        console.warn("Client thumbnail write error:", clientThumbErr.message);
-      }
-    }
-
-    // 2. If thumbnail not yet ready, extract frame using FFmpeg at 1.0s (or probe duration * 0.1)
-    if (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 500) {
-      try {
-        const seekTime = probe?.durationSeconds && probe.durationSeconds > 2 ? 1.0 : 0.5;
-        await extractVideoThumbnail(filePath, thumbPath, seekTime);
-        coverUrl = `/uploads/users/${ownerKey}/videos/${thumbFileName}`;
-      } catch (thumbErr: any) {
-        console.warn("FFmpeg thumbnail extraction error:", thumbErr.message);
-      }
-    }
-
-    // If cloud object storage is configured, upload video & thumbnail to COS with public-read permissions
+    let storedRemotely = false;
     if (CosService.isConfigured()) {
-      try {
-        CosService.ensureBucketPublicAndCors().catch(() => {});
-
-        const cosKey = `uploads/users/${ownerKey}/videos/${safeName}`;
-        const cosUrl = await CosService.uploadFile(filePath, cosKey);
-        fileUrl = cosUrl;
-        isCos = true;
-
-        if (fs.existsSync(thumbPath)) {
-          const cosThumbKey = `uploads/users/${ownerKey}/thumbnails/${safeName}.jpg`;
-          const thumbCosUrl = await CosService.uploadFile(thumbPath, cosThumbKey);
-          coverUrl = thumbCosUrl;
-        }
-      } catch (cosErr: any) {
-        console.warn("cloud object storage upload fallback to local:", cosErr.message);
-      }
+      await CosService.uploadFile(outputPath, uploadKey);
+      storedRemotely = true;
+      try { fs.unlinkSync(outputPath); } catch {}
     }
 
-    // Automatically register into Avatar Library
-    const displayName =
-      avatarName ||
-      file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\u4e00-\u9fa5 -]/g, "") ||
-      "我的口播形象";
+    if (!markPendingUploadStored(uploadKey)) {
+      throw new Error("上传记录未能持久化");
+    }
 
-    const savedAvatar = AvatarStore.create({
-      userId: access.userId || undefined,
-      name: displayName,
-      videoUrl: fileUrl,
-      videoPath: filePath,
-      coverUrl,
-      durationSeconds: probe?.durationSeconds || 0,
-      width: probe?.width || 1080,
-      height: probe?.height || 1920,
-      fps: probe?.fps || 30,
-      fileSize: file.size,
-      isCos,
-    });
-
-    return NextResponse.json({
-      success: true,
-      fileName: file.name,
-      filePath,
-      fileUrl,
-      coverUrl,
-      size: file.size,
-      probe,
-      isCos,
-      avatar: { ...savedAvatar, canManage: true },
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err.message || "上传异常" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, uploadKey, storedRemotely });
+  } catch {
+    if (uploadKey) {
+      cancelPendingUpload(uploadKey);
+      try { await CosService.deleteObject(uploadKey); } catch {}
+    }
+    if (outputPath) {
+      try { fs.unlinkSync(outputPath); } catch {}
+    }
+    return NextResponse.json({ error: "上传异常，请稍后重试" }, { status: 500 });
   }
 }

@@ -1,12 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { pipeline } from "stream/promises";
-import { Readable } from "stream";
+import { NextRequest, NextResponse } from "next/server";
 import { VoiceStore } from "@/lib/store/voice-store";
-import { getAppConfig } from "@/lib/config";
 import { CosService } from "@/lib/cos";
 import { extractAudioFromMedia } from "@/lib/engine/ffmpeg";
+import { toPublicVoice } from "@/lib/server/public-data";
+import { downloadTrustedMediaToFile } from "@/lib/server/media-response";
+import {
+  localUploadPath,
+  ownerKeyFor,
+  resolveOwnedUpload,
+  deleteOwnedUploadSource,
+  claimPendingUpload,
+} from "@/lib/server/upload-policy";
 import {
   canManageMediaItem,
   canViewAllMedia,
@@ -23,143 +30,119 @@ export async function GET(req: NextRequest) {
     const voices = await VoiceStore.getAllAsync();
     const visibleVoices = (canViewAllMedia(access)
       ? voices
-      : voices.filter(
-          (voice) => voice.isDefault || voice.userId === access.userId
-        )
-    ).map((voice) => ({
-      ...voice,
-      canManage: !voice.isDefault && canManageMediaItem(access, voice),
-    }));
-
+      : voices.filter((voice) => voice.isDefault || voice.userId === access.userId)
+    ).map((voice) =>
+      toPublicVoice(voice, !voice.isDefault && canManageMediaItem(access, voice))
+    );
     return NextResponse.json({ success: true, voices: visibleVoices });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "声音库加载失败" }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
+  let derivedAudioSource = "";
+  let derivedUserId: string | null = null;
   try {
     const access = await resolveAccessContext(req);
     if (access.isolated && !access.userId) return unauthorizedResponse();
-    const ownerKey = (access.userId || "local").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const contentType = req.headers.get("content-type") || "";
 
-    if (contentType.includes("multipart/form-data")) {
-      const formData = await req.formData();
-      const file = formData.get("file") as File | null;
-      const name = (formData.get("name") as string)?.trim() || "未命名自定义音色";
-      const description = (formData.get("description") as string)?.trim() || "用户自定义原声音频";
+    const body = await req.json();
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > 80) {
+      return NextResponse.json({ error: "音色名称无效" }, { status: 400 });
+    }
 
-      if (!file) {
-        return NextResponse.json(
-          { error: "请上传音频文件 (MP3/WAV/M4A) 或视频文件 (MP4/MOV)" },
-          { status: 400 }
-        );
+    const uploaded = await resolveOwnedUpload({
+      key: body.uploadKey,
+      userId: access.userId,
+      folder: "voices",
+    });
+    if (!uploaded) {
+      return NextResponse.json({ error: "声音上传凭证无效" }, { status: 400 });
+    }
+
+    let audioSource = uploaded.source;
+    let audioPath = uploaded.localPath || "";
+    let storedRemotely = uploaded.storedRemotely;
+    const ext = path.extname(uploaded.key).toLowerCase();
+
+    if (ext === ".mp4" || ext === ".mov") {
+      const processingDir = path.join(process.cwd(), ".runtime", "voice-processing");
+      fs.mkdirSync(processingDir, { recursive: true });
+      const sourcePath = path.join(processingDir, `${crypto.randomUUID()}${ext}`);
+      const outputKey = `uploads/users/${ownerKeyFor(access.userId)}/voices/${crypto.randomUUID()}.mp3`;
+      const outputPath = localUploadPath(outputKey);
+      derivedAudioSource = outputPath;
+      derivedUserId = access.userId;
+      try {
+        await downloadTrustedMediaToFile({
+          source: uploaded.localPath || uploaded.source,
+          outputPath: sourcePath,
+          maxBytes: 50 * 1024 * 1024,
+        });
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        await extractAudioFromMedia(sourcePath, outputPath);
+      } finally {
+        try { fs.unlinkSync(sourcePath); } catch {}
       }
 
-      const uploadsDir = path.join(
-        process.cwd(),
-        "public",
-        "uploads",
-        "users",
-        ownerKey,
-        "voices"
-      );
-      fs.mkdirSync(uploadsDir, { recursive: true });
-
-      const safeBaseName = `${Date.now()}_${file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const ext = path.extname(file.name).toLowerCase() || ".mp3";
-      const tempUploadPath = path.join(uploadsDir, `${safeBaseName}_raw${ext}`);
-
-      // 1. Stream uploaded file to disk
-      const nodeReadable = Readable.fromWeb(file.stream() as any);
-      const writeStream = fs.createWriteStream(tempUploadPath);
-      await pipeline(nodeReadable, writeStream);
-
-      // 2. Extract or convert audio to MP3
-      const isVideo = file.type.startsWith("video/") || [".mp4", ".mov", ".mkv", ".webm", ".avi"].includes(ext);
-      const finalMp3FileName = `${safeBaseName}.mp3`;
-      const finalAudioPath = path.join(uploadsDir, finalMp3FileName);
-
-      let wasExtracted = false;
-      if (isVideo || ext !== ".mp3") {
-        try {
-          await extractAudioFromMedia(tempUploadPath, finalAudioPath);
-          wasExtracted = true;
-          // Remove temp video file to save disk space
-          if (fs.existsSync(tempUploadPath) && tempUploadPath !== finalAudioPath) {
-            try { fs.unlinkSync(tempUploadPath); } catch {}
-          }
-        } catch (e: any) {
-          console.warn("Audio extraction fallback, using original file:", e.message);
-          // If ffmpeg extract fails, fallback to keeping temp file
-          fs.copyFileSync(tempUploadPath, finalAudioPath);
-        }
-      } else {
-        fs.copyFileSync(tempUploadPath, finalAudioPath);
-        if (tempUploadPath !== finalAudioPath) {
-          try { fs.unlinkSync(tempUploadPath); } catch {}
-        }
-      }
-
-      const config = getAppConfig();
-      let publicAudioUrl = `/uploads/users/${ownerKey}/voices/${finalMp3FileName}`;
-      let isCos = false;
-
-      // 3. Upload extracted audio to cloud object storage
       if (CosService.isConfigured()) {
-        try {
-          const cosKey = `uploads/users/${ownerKey}/voices/${finalMp3FileName}`;
-          publicAudioUrl = await CosService.uploadFile(finalAudioPath, cosKey);
-          isCos = true;
-        } catch (cosErr: any) {
-          console.warn("COS upload for voice fallback to local:", cosErr.message);
-          const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-          publicAudioUrl = `${baseUrl}/uploads/users/${ownerKey}/voices/${finalMp3FileName}`;
-        }
+        await CosService.uploadFile(outputPath, outputKey);
+        audioSource = CosService.getPublicUrl(outputKey);
+        derivedAudioSource = audioSource;
+        audioPath = "";
+        storedRemotely = true;
+        try { fs.unlinkSync(outputPath); } catch {}
       } else {
-        const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
-        publicAudioUrl = `${baseUrl}/uploads/users/${ownerKey}/voices/${finalMp3FileName}`;
+        audioSource = outputPath;
+        audioPath = outputPath;
+        storedRemotely = false;
       }
-
-      const createdVoice = VoiceStore.create({
-        userId: access.userId || undefined,
-        name,
-        description: isVideo ? `${description} (由视频自动提取音频)` : description,
-        audioUrl: publicAudioUrl,
-        audioPath: finalAudioPath,
-        isDefault: false,
-      });
-
-      return NextResponse.json({
-        success: true,
-        voice: { ...createdVoice, canManage: true },
-        isCos,
-        extractedFromVideo: isVideo,
-      });
-    } else {
-      const body = await req.json();
-      const { name, audioUrl, description } = body;
-
-      if (!name || !audioUrl) {
-        return NextResponse.json({ error: "音色名称与音频 URL 均为必填项" }, { status: 400 });
-      }
-
-      const createdVoice = VoiceStore.create({
-        userId: access.userId || undefined,
-        name: name.trim(),
-        description: description?.trim() || "自定义音频直链",
-        audioUrl: audioUrl.trim(),
-        isDefault: false,
-      });
-
-      return NextResponse.json({
-        success: true,
-        voice: { ...createdVoice, canManage: true },
+      await deleteOwnedUploadSource({
+        source: uploaded.localPath || uploaded.source,
+        userId: access.userId,
+        folder: "voices",
       });
     }
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || "创建音色失败" }, { status: 500 });
+
+    const created = VoiceStore.create({
+      userId: access.userId || undefined,
+      name,
+      description:
+        typeof body.description === "string" && body.description.trim()
+          ? body.description.trim().slice(0, 200)
+          : "用户自定义原声音频",
+      audioUrl: audioSource,
+      audioPath,
+      isDefault: false,
+    });
+    if (!claimPendingUpload({ key: body.uploadKey, userId: access.userId })) {
+      VoiceStore.delete(created.id);
+      await deleteOwnedUploadSource({
+        source: audioPath || audioSource,
+        userId: access.userId,
+        folder: "voices",
+      });
+      return NextResponse.json({ error: "上传凭证已过期或已被使用" }, { status: 409 });
+    }
+    derivedAudioSource = "";
+
+    return NextResponse.json({
+      success: true,
+      voice: toPublicVoice(created, true),
+      storedRemotely,
+      extractedFromVideo: ext === ".mp4" || ext === ".mov",
+    });
+  } catch {
+    if (derivedAudioSource) {
+      await deleteOwnedUploadSource({
+        source: derivedAudioSource,
+        userId: derivedUserId,
+        folder: "voices",
+      }).catch(() => undefined);
+    }
+    return NextResponse.json({ error: "创建音色失败" }, { status: 500 });
   }
 }
 
@@ -168,17 +151,19 @@ export async function DELETE(req: NextRequest) {
     const access = await resolveAccessContext(req);
     if (access.isolated && !access.userId) return unauthorizedResponse();
 
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-    if (!id) {
-      return NextResponse.json({ error: "ID 必填" }, { status: 400 });
-    }
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "ID 必填" }, { status: 400 });
     const voice = VoiceStore.get(id);
     if (!voice || !canManageMediaItem(access, voice)) return mediaNotFoundResponse();
 
+    await deleteOwnedUploadSource({
+      source: voice.audioPath || voice.audioUrl,
+      userId: voice.userId,
+      folder: "voices",
+    });
     VoiceStore.delete(id);
     return NextResponse.json({ success: true });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "删除音色失败" }, { status: 400 });
   }
 }

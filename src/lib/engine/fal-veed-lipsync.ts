@@ -4,6 +4,12 @@ import { getAppConfig } from "../config";
 import { CosService } from "../cos";
 import { concatVideos, probeMedia, sliceMedia } from "./ffmpeg";
 import { downloadFileToDisk } from "./download-file";
+import {
+  assertSameOrigin,
+  fetchWithOutboundUrlPolicy,
+  providerUrlPolicy,
+  validateOutboundUrl,
+} from "../server/outbound-url-policy";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
 
 export interface FalVeedJobProgress {
@@ -18,6 +24,7 @@ export interface FalVeedLipsyncOptions {
   audioUrl?: string;
   objectKeyPrefix?: string;
   onLog?: (msg: string) => void;
+  onProviderAccepted?: () => void;
   onJobCreated?: (info: FalVeedJobProgress) => void;
   onResultReady?: (info: FalVeedJobProgress) => void;
 }
@@ -126,7 +133,11 @@ export class FalVeedLipsyncAdapter {
     let lastError: Error | null = null;
     for (let i = 0; i < attempts; i++) {
       try {
-        const resp = await fetch(url, init);
+        const resp = await fetchWithOutboundUrlPolicy(
+          url,
+          init,
+          { ...providerUrlPolicy("fal"), sensitiveHeaders: Boolean(new Headers(init.headers).get("Authorization")) },
+        );
         if (resp.status >= 500 || resp.status === 429) {
           lastError = new Error(`HTTP ${resp.status}`);
           await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
@@ -185,6 +196,9 @@ export class FalVeedLipsyncAdapter {
           continue;
         }
 
+        await validateOutboundUrl(initiated.upload_url, providerUrlPolicy("fal"));
+        await validateOutboundUrl(initiated.file_url, providerUrlPolicy("fal"));
+
         const buf = fs.readFileSync(filePath);
         const putResp = await this.fetchWithRetry(initiated.upload_url, {
           method: "PUT",
@@ -220,7 +234,8 @@ export class FalVeedLipsyncAdapter {
     }
     if (objectKey && CosService.isConfigured()) {
       onLog(`[VEED] 正在将${label}同步到 COS 公网直链...`);
-      return CosService.uploadFile(filePath, objectKey);
+      await CosService.uploadFile(filePath, objectKey);
+      return CosService.getDownloadUrl(objectKey, undefined, 6 * 60 * 60);
     }
     return this.uploadToFalStorage({ apiKey, filePath, label, onLog });
   }
@@ -238,7 +253,7 @@ export class FalVeedLipsyncAdapter {
       filePath: options.videoPath,
       fileUrl: options.videoUrl,
       objectKey: options.objectKeyPrefix
-        ? `${options.objectKeyPrefix}/heygen-source-video.mp4`
+        ? `${options.objectKeyPrefix}/source-video.mp4`
         : undefined,
       label: "视频",
       onLog,
@@ -248,7 +263,7 @@ export class FalVeedLipsyncAdapter {
       filePath: options.audioPath,
       fileUrl: options.audioUrl,
       objectKey: options.objectKeyPrefix
-        ? `${options.objectKeyPrefix}/exact-final-indextts.wav`
+        ? `${options.objectKeyPrefix}/voice-track.wav`
         : undefined,
       label: "音频",
       onLog,
@@ -274,11 +289,14 @@ export class FalVeedLipsyncAdapter {
     }
 
     const lipsyncId = submitted.request_id;
+    options.onProviderAccepted?.();
+    options.onJobCreated?.({ lipsyncId });
     const statusUrl =
       submitted.status_url || `${queueBase}/requests/${lipsyncId}/status`;
     const responseUrl = submitted.response_url || `${queueBase}/requests/${lipsyncId}`;
+    assertSameOrigin(statusUrl, queueBase);
+    assertSameOrigin(responseUrl, queueBase);
     onLog(`[VEED] 任务已建立 (ID: ${lipsyncId})，开始轮询进度...`);
-    options.onJobCreated?.({ lipsyncId });
 
     const timeoutMs = pollTimeoutMs(options.durationSeconds || 90);
     const pollDeadline = Date.now() + timeoutMs;
@@ -335,6 +353,7 @@ export class FalVeedLipsyncAdapter {
       url: completedUrl,
       outputPath,
       onProgress: (msg) => onLog(`[VEED] ${msg}`),
+      urlPolicy: providerUrlPolicy("fal"),
     });
     onLog(`[VEED] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB)`);
 
@@ -388,9 +407,11 @@ export class FalVeedLipsyncAdapter {
       return { status: status || "UNKNOWN" };
     }
 
+    const completedResponseUrl = polled.response_url || `${queueBase}/requests/${requestId}`;
+    assertSameOrigin(completedResponseUrl, queueBase);
     const fetched = await this.fetchCompletedVideo({
       apiKey,
-      responseUrl: polled.response_url || `${queueBase}/requests/${requestId}`,
+      responseUrl: completedResponseUrl,
     });
     return { status, url: fetched.url };
   }
@@ -410,7 +431,7 @@ export class FalVeedLipsyncAdapter {
 
     const audioProbe = await probeMedia(options.audioPath);
     const chunks = planLipsyncChunks(audioProbe.durationSeconds);
-    const rawVideoPath = path.join(outDir, "heygen-result-raw.mp4");
+    const rawVideoPath = path.join(outDir, "rendered-source.mp4");
     const ctx = { apiKey, model };
 
     onLog(

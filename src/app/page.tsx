@@ -22,28 +22,29 @@ import {
   PlayerComparison,
   VoiceSelector,
 } from "@/components";
-import { TaskItem } from "@/lib/store/task-store";
-import { VoiceItem } from "@/lib/store/voice-store";
-import { LipsyncProvider } from "@/lib/lipsync-provider";
+import type {
+  PublicAvatarItem,
+  PublicEngine,
+  PublicTaskItem,
+  PublicVideoSelection,
+  PublicVoiceItem,
+} from "@/lib/public-contract";
 
 const ACTIVE_TASK_KEY = "active_lipsync_task_id";
+const PRESELECTED_AVATAR_KEY = "preselected_avatar_id";
+const PRESELECTED_VOICE_KEY = "preselected_voice_id";
 
 export default function StudioPage() {
-  const [videoData, setVideoData] = useState<{
-    name: string;
-    path: string;
-    url: string;
-    probe: any;
-  } | null>(null);
+  const [videoData, setVideoData] = useState<PublicVideoSelection | null>(null);
 
   const [scriptText, setScriptText] = useState("");
   const [toneProfile, setToneProfile] = useState<"low" | "high">("low");
   const [videoFit, setVideoFit] = useState<"smart" | "preserve">("smart");
   const [emotionIntensity, setEmotionIntensity] = useState(0.8);
-  const [selectedVoice, setSelectedVoice] = useState<VoiceItem | null>(null);
-  const [lipsyncProvider, setLipsyncProvider] = useState<LipsyncProvider>("veed");
+  const [selectedVoice, setSelectedVoice] = useState<PublicVoiceItem | null>(null);
+  const [engine, setEngine] = useState<PublicEngine>("b");
 
-  const [currentTask, setCurrentTask] = useState<TaskItem | null>(null);
+  const [currentTask, setCurrentTask] = useState<PublicTaskItem | null>(null);
   const [loading, setLoading] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,48 +52,74 @@ export default function StudioPage() {
 
   // 1. Initial restore on mount
   useEffect(() => {
-    // Fetch SSO Session info
-    fetch(`/api/sso/session?t=${Date.now()}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.data) setUserSession(d.data);
-      })
-      .catch(() => {});
+    // Remove legacy full-task caches. Only an opaque task id may persist locally.
+    localStorage.removeItem("cached_active_task");
+    localStorage.removeItem("cached_active_task_v2");
+    localStorage.removeItem("preselected_avatar");
+    localStorage.removeItem("preselected_voice");
 
-    // 1.1 Fast immediate restore from local storage cache
-    const cachedTaskStr = localStorage.getItem("cached_active_task");
-    if (cachedTaskStr) {
+    // Resolve the current identity before loading any user-authored task content.
+    const restoreTask = async () => {
       try {
-        const cachedTask: TaskItem = JSON.parse(cachedTaskStr);
-        if (cachedTask && cachedTask.id) {
-          setCurrentTask(cachedTask);
-          if (cachedTask.inputs) {
-            setScriptText(cachedTask.inputs.scriptText || "");
-            setToneProfile(cachedTask.inputs.toneProfile || "low");
-            setVideoFit(cachedTask.inputs.videoFit || "smart");
-            setEmotionIntensity(cachedTask.inputs.emotionIntensity ?? 0.8);
-            if (cachedTask.inputs.lipsyncProvider) {
-              setLipsyncProvider(cachedTask.inputs.lipsyncProvider);
-            }
-            if (cachedTask.inputs.videoPath || cachedTask.inputs.videoUrl) {
+        const sessionResp = await fetch(`/api/sso/session?t=${Date.now()}`);
+        if (!sessionResp.ok) {
+          localStorage.removeItem(ACTIVE_TASK_KEY);
+          setCurrentTask(null);
+          return;
+        }
+        const sessionData = await sessionResp.json();
+        if (!sessionData.data) {
+          localStorage.removeItem(ACTIVE_TASK_KEY);
+          return;
+        }
+        setUserSession(sessionData.data);
+
+        const avatarId = localStorage.getItem(PRESELECTED_AVATAR_KEY);
+        const voiceId = localStorage.getItem(PRESELECTED_VOICE_KEY);
+        localStorage.removeItem(PRESELECTED_AVATAR_KEY);
+        localStorage.removeItem(PRESELECTED_VOICE_KEY);
+
+        if (avatarId) {
+          const avatarResp = await fetch(`/api/avatars?t=${Date.now()}`);
+          if (avatarResp.ok) {
+            const avatarData = await avatarResp.json();
+            const avatar = (avatarData.avatars || []).find(
+              (item: PublicAvatarItem) => item.id === avatarId,
+            ) as PublicAvatarItem | undefined;
+            if (avatar) {
               setVideoData({
-                name: cachedTask.inputs.videoName || "口播素材.mp4",
-                path: cachedTask.inputs.videoPath || "",
-                url: cachedTask.inputs.videoUrl || "",
-                probe: null,
+                avatarId: avatar.id,
+                name: avatar.name || "口播素材.mp4",
+                previewUrl: avatar.videoUrl,
+                probe: {
+                  width: avatar.width,
+                  height: avatar.height,
+                  durationSeconds: avatar.durationSeconds,
+                  fps: avatar.fps || 30,
+                  hasAudio: true,
+                },
               });
             }
           }
         }
-      } catch (e) {
-        // ignore cache parse error
-      }
-    }
 
-    // 1.2 Network sync from API
-    const restoreTask = async () => {
+        if (voiceId) {
+          const voiceResp = await fetch(`/api/voices?t=${Date.now()}`);
+          if (voiceResp.ok) {
+            const voiceData = await voiceResp.json();
+            const voice = (voiceData.voices || []).find(
+              (item: PublicVoiceItem) => item.id === voiceId,
+            ) as PublicVoiceItem | undefined;
+            if (voice) setSelectedVoice(voice);
+          }
+        }
+      } catch {
+        localStorage.removeItem(ACTIVE_TASK_KEY);
+        return;
+      }
+
       const savedTaskId = localStorage.getItem(ACTIVE_TASK_KEY);
-      let taskToLoad: TaskItem | null = null;
+      let taskToLoad: PublicTaskItem | null = null;
 
       if (savedTaskId) {
         try {
@@ -100,60 +127,36 @@ export default function StudioPage() {
           if (resp.ok) {
             const data = await resp.json();
             if (data.task) taskToLoad = data.task;
+          } else {
+            localStorage.removeItem(ACTIVE_TASK_KEY);
+            setCurrentTask(null);
           }
         } catch {
-          // ignore
+          localStorage.removeItem(ACTIVE_TASK_KEY);
         }
       }
 
       if (taskToLoad) {
         setCurrentTask(taskToLoad);
         localStorage.setItem(ACTIVE_TASK_KEY, taskToLoad.id);
-        localStorage.setItem("cached_active_task", JSON.stringify(taskToLoad));
 
         if (taskToLoad.inputs) {
           setScriptText(taskToLoad.inputs.scriptText || "");
           setToneProfile(taskToLoad.inputs.toneProfile || "low");
           setVideoFit(taskToLoad.inputs.videoFit || "smart");
             setEmotionIntensity(taskToLoad.inputs.emotionIntensity ?? 0.8);
-            if (taskToLoad.inputs.lipsyncProvider) {
-              setLipsyncProvider(taskToLoad.inputs.lipsyncProvider);
-            }
-          if (taskToLoad.inputs.videoPath || taskToLoad.inputs.videoUrl) {
+            if (taskToLoad.inputs.engine) setEngine(taskToLoad.inputs.engine);
+          if (taskToLoad.results.originalVideoUrl) {
             setVideoData({
+              avatarId: "",
               name: taskToLoad.inputs.videoName || "口播素材.mp4",
-              path: taskToLoad.inputs.videoPath || "",
-              url: taskToLoad.inputs.videoUrl || "",
+              previewUrl: taskToLoad.results.originalVideoUrl,
               probe: null,
             });
           }
         }
       }
     };
-
-    // Check preselected avatar from /avatars
-    const savedPreselectedAvatar = localStorage.getItem("preselected_avatar");
-    if (savedPreselectedAvatar) {
-      try {
-        const parsed = JSON.parse(savedPreselectedAvatar);
-        setVideoData(parsed);
-        localStorage.removeItem("preselected_avatar");
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // Check preselected voice from /voices
-    const savedPreselectedVoice = localStorage.getItem("preselected_voice");
-    if (savedPreselectedVoice) {
-      try {
-        const parsed = JSON.parse(savedPreselectedVoice);
-        setSelectedVoice(parsed);
-        localStorage.removeItem("preselected_voice");
-      } catch (e) {
-        // ignore
-      }
-    }
 
     restoreTask();
   }, []);
@@ -173,8 +176,10 @@ export default function StudioPage() {
           if (data.task && isSubscribed) {
             setCurrentTask(data.task);
             localStorage.setItem(ACTIVE_TASK_KEY, data.task.id);
-            localStorage.setItem("cached_active_task", JSON.stringify(data.task));
           }
+        } else {
+          localStorage.removeItem(ACTIVE_TASK_KEY);
+          setCurrentTask(null);
         }
       } catch (err) {
         console.error("Poller error:", err);
@@ -213,16 +218,13 @@ export default function StudioPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          videoName: videoData.name,
-          videoPath: videoData.path,
-          videoUrl: videoData.url,
+          avatarId: videoData.avatarId,
           scriptText: scriptText.trim(),
           toneProfile,
           videoFit,
           emotionIntensity,
           speakerVoiceId: selectedVoice?.id,
-          speakerAudioUrl: selectedVoice?.audioUrl,
-          lipsyncProvider,
+          engine,
         }),
       });
 
@@ -234,7 +236,6 @@ export default function StudioPage() {
       const json = await resp.json();
       setCurrentTask(json.task);
       localStorage.setItem(ACTIVE_TASK_KEY, json.task.id);
-      localStorage.setItem("cached_active_task", JSON.stringify(json.task));
     } catch (err: any) {
       setError(err.message || "任务启动失败");
     } finally {
@@ -244,7 +245,6 @@ export default function StudioPage() {
 
   const handleReset = () => {
     localStorage.removeItem(ACTIVE_TASK_KEY);
-    localStorage.removeItem("cached_active_task");
     setCurrentTask(null);
     setError(null);
   };
@@ -252,19 +252,7 @@ export default function StudioPage() {
   const isRunning =
     currentTask?.status === "processing" || currentTask?.status === "pending";
 
-  const canRecoverPaidJob = Boolean(
-    currentTask &&
-      currentTask.status !== "completed" &&
-      ((currentTask.results?.heygenLipsyncId &&
-        currentTask.results.heygenLipsyncId.length > 0) ||
-        currentTask.results?.pixverseResultUrl ||
-        currentTask.results?.veedResultUrl ||
-        (currentTask.logs || []).some(
-          (entry) =>
-            entry.message.includes("任务已建立 (ID:") ||
-            entry.message.includes("正在下载成片")
-        ))
-  );
+  const canRecoverPaidJob = Boolean(currentTask?.recoverable);
 
   const handleRecoverPaidJob = async () => {
     if (!currentTask?.id || recovering) return;
@@ -281,7 +269,6 @@ export default function StudioPage() {
       if (data.task) {
         setCurrentTask(data.task);
         localStorage.setItem(ACTIVE_TASK_KEY, data.task.id);
-        localStorage.setItem("cached_active_task", JSON.stringify(data.task));
       }
     } catch (err: any) {
       setError(err.message || "恢复已扣费成片失败");
@@ -436,10 +423,10 @@ export default function StudioPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <button
                 type="button"
-                onClick={() => setLipsyncProvider("pixverse")}
+                onClick={() => setEngine("a")}
                 disabled={isRunning}
                 className={`rounded-xl border p-3 text-left transition-all ${
-                  lipsyncProvider === "pixverse"
+                  engine === "a"
                     ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}
@@ -448,10 +435,10 @@ export default function StudioPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setLipsyncProvider("veed")}
+                onClick={() => setEngine("b")}
                 disabled={isRunning}
                 className={`rounded-xl border p-3 text-left transition-all ${
-                  lipsyncProvider === "veed"
+                  engine === "b"
                     ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}
@@ -465,10 +452,10 @@ export default function StudioPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setLipsyncProvider("heygen")}
+                onClick={() => setEngine("c")}
                 disabled={isRunning}
                 className={`rounded-xl border p-3 text-left transition-all ${
-                  lipsyncProvider === "heygen"
+                  engine === "c"
                     ? "border-blue-500/80 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
                     : "border-white/[0.06] bg-black/30 text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                 }`}

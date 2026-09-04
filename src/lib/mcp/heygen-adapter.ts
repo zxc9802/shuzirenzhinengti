@@ -3,6 +3,7 @@ import { getAppConfig } from "../config";
 import { hasHeyGenOAuthTokens } from "./heygen-oauth-store";
 import { pollTimeoutMs } from "../engine/lipsync-chunks";
 import { downloadFileToDisk } from "../engine/download-file";
+import { providerUrlPolicy } from "../server/outbound-url-policy";
 import path from "path";
 
 export interface HeyGenSubmissionOptions {
@@ -10,6 +11,9 @@ export interface HeyGenSubmissionOptions {
   audioUrl: string;
   submissionTitle: string;
   onLog?: (msg: string) => void;
+  onProviderAccepted?: () => void;
+  onJobCreated?: (info: { lipsyncId: string }) => void;
+  onResultReady?: (info: { lipsyncId: string; downloadUrl: string }) => void;
 }
 
 export interface HeyGenLipsyncResult {
@@ -73,6 +77,7 @@ export class HeyGenMcpAdapter {
       await mcpManager.connect({
         transport,
         serverUrl,
+        authToken: config.heygenMcpAuthToken,
         command: config.heygenMcpServerCommand,
         args: config.heygenMcpServerArgs,
       });
@@ -140,6 +145,7 @@ export class HeyGenMcpAdapter {
 
       const createRaw = await mcpManager.callTool(createToolName, createPayload);
       const parsed = parseMcpToolResponse(createRaw);
+      options.onProviderAccepted?.();
 
       lipsyncId =
         parsed?.lipsync_id ||
@@ -156,6 +162,7 @@ export class HeyGenMcpAdapter {
     }
 
     onLog(`[MCP Client] 高精度唇形驱动任务已建立 (ID: ${lipsyncId})，开始轮询进度...`);
+    options.onJobCreated?.({ lipsyncId });
 
     // 3. Poll for completion via MCP Tool: get_lipsync
     const pollDeadline = Date.now() + pollTimeoutMs(180);
@@ -188,6 +195,7 @@ export class HeyGenMcpAdapter {
 
       if (status === "completed" || status === "success") {
         completedUrl = url;
+        if (completedUrl) options.onResultReady?.({ lipsyncId, downloadUrl: completedUrl });
         onLog(`[MCP Client] MCP 对口型渲染完成！正在下载视频...`);
         break;
       } else if (status === "failed" || status === "error") {
@@ -209,11 +217,12 @@ export class HeyGenMcpAdapter {
     }
 
     // 4. Download result video to outDir
-    const rawHeyGenVideoPath = path.join(outDir, "heygen-result-raw.mp4");
+    const renderedVideoPath = path.join(outDir, "rendered-source.mp4");
     const downloaded = await downloadFileToDisk({
       url: completedUrl,
-      outputPath: rawHeyGenVideoPath,
+      outputPath: renderedVideoPath,
       onProgress: (msg) => onLog(`[MCP Client] 正在拉取成片 ${msg}`),
+      urlPolicy: providerUrlPolicy("heygen"),
     });
 
     onLog(`[MCP Client] HeyGen 视频下载完成 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB)`);
