@@ -94,6 +94,51 @@ test("outbound URL policy rejects private addresses, credentials and control-pla
   );
 });
 
+test("outbound HTTPS download supports Node lookup requests for all addresses", async () => {
+  const dns = await import("node:dns");
+  const https = await import("node:https");
+  const policy = await import("../src/lib/server/outbound-url-policy.ts");
+  const originalLookup = dns.default.promises.lookup;
+  const originalRequest = https.default.request;
+  dns.default.promises.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+  try {
+    https.default.request = (_url, options, callback) => {
+      const request = new EventEmitter();
+      request.write = () => true;
+      request.end = () => {
+        options.lookup("audio.302.ai", { all: true }, (error, addresses) => {
+          if (error) {
+            request.emit("error", error);
+            return;
+          }
+          try {
+            assert.deepEqual(addresses, [{ address: "8.8.8.8", family: 4 }]);
+          } catch (lookupError) {
+            request.emit("error", lookupError);
+            return;
+          }
+          const response = new PassThrough();
+          response.statusCode = 200;
+          response.headers = { "content-length": "2" };
+          callback(response);
+          response.end("ok");
+        });
+      };
+      return request;
+    };
+
+    const response = await policy.fetchWithOutboundUrlPolicy(
+      "https://audio.302.ai/output.wav",
+      {},
+      policy.providerUrlPolicy("indextts"),
+    );
+    assert.equal(await response.text(), "ok");
+  } finally {
+    dns.default.promises.lookup = originalLookup;
+    https.default.request = originalRequest;
+  }
+});
+
 test("outbound URL redirects are revalidated and sensitive headers cannot cross origins", async () => {
   const dns = await import("node:dns");
   const https = await import("node:https");

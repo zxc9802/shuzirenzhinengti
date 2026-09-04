@@ -147,7 +147,11 @@ function fetchPinnedHttps(
         headers,
         signal: init.signal || undefined,
         servername: resolved.url.hostname,
-        lookup: ((_hostname: string, _options: unknown, callback: Function) => {
+        lookup: ((_hostname: string, options: { all?: boolean }, callback: Function) => {
+          if (options?.all) {
+            callback(null, [{ address: resolved.address, family: resolved.family }]);
+            return;
+          }
           callback(null, resolved.address, resolved.family);
         }) as any,
       },
