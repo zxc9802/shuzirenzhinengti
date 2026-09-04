@@ -110,7 +110,7 @@ function AvatarCardItem({
           ref={videoRef}
           src={avatar.videoUrl}
           className={cn(
-            "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+            "pointer-events-none absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
             isHovered ? "opacity-100 z-10" : "opacity-0 z-0"
           )}
           muted
