@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import fs from "fs";
 import path from "path";
 import { CosService } from "../cos";
@@ -18,6 +19,8 @@ export interface LogEntry {
   timestamp: number;
   level: "info" | "warn" | "error" | "success";
   message: string;
+  /** Application-authored summary; upstream messages stay private for recovery. */
+  publicMessage?: string;
 }
 
 export interface TaskBillingInfo {
@@ -27,6 +30,7 @@ export interface TaskBillingInfo {
   requestId?: string;
   estimatedDuration?: number;
   estimatedPoints?: number;
+  reservedPoints?: number;
   actualDuration?: number;
   chargedPoints?: number;
   costCny?: number;
@@ -99,6 +103,7 @@ export interface TaskItem {
     sha256Audio?: string;
   };
   error?: string;
+  errorCode?: string;
 }
 
 const STATE_DIR = path.join(process.cwd(), ".runtime", "state");
@@ -170,11 +175,11 @@ function persistStore() {
     // Mirror to cloud object storage for 100% persistent cloud recovery across container restarts
     if (CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_TASKS_KEY, arr).catch((err) => {
-        console.warn("TaskStore COS sync error:", err.message);
+        logServerError("tasks.sync_failed", err, "warn");
       });
     }
   } catch (e) {
-    console.error("Failed to persist tasks store", e);
+    logServerError("tasks.persist_failed", e);
   }
 }
 
@@ -198,7 +203,7 @@ export const TaskStore = {
           persistStore();
         }
       } catch (err: any) {
-        console.warn("Failed to load tasks from cloud:", err.message);
+        logServerError("tasks.load_failed", err, "warn");
       }
     }
 
@@ -248,6 +253,7 @@ export const TaskStore = {
           timestamp: now,
           level: "info",
           message: `任务已创建 (${data.inputs.videoName})`,
+          publicMessage: "任务已创建",
         },
       ],
     };
@@ -282,7 +288,8 @@ export const TaskStore = {
   addLog(
     id: string,
     message: string,
-    level: LogEntry["level"] = "info"
+    level: LogEntry["level"] = "info",
+    publicMessage?: string
   ): void {
     if (deletedTaskIds.has(id)) return;
     reloadFromDisk();
@@ -292,6 +299,7 @@ export const TaskStore = {
       timestamp: Date.now(),
       level,
       message,
+      publicMessage,
     });
     task.updatedAt = Date.now();
     persistStore();
@@ -331,7 +339,7 @@ export const TaskStore = {
         try {
           cb(task);
         } catch (e) {
-          console.error("Task subscriber callback error", e);
+          logServerError("tasks.subscriber_failed", e);
         }
       }
     }

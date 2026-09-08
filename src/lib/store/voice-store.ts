@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import fs from "fs";
 import path from "path";
 import { CosService } from "../cos";
@@ -90,11 +91,11 @@ function persistStore() {
     // Mirror to cloud object storage
     if (CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_VOICES_KEY, memoryVoices).catch((err) => {
-        console.warn("VoiceStore COS sync error:", err.message);
+        logServerError("voices.sync_failed", err, "warn");
       });
     }
   } catch (e) {
-    console.error("Failed to persist voices store", e);
+    logServerError("voices.persist_failed", e);
   }
 }
 
@@ -113,7 +114,7 @@ export const VoiceStore = {
           persistStore();
         }
       } catch (err: any) {
-        console.warn("Failed to load voices from cloud:", err.message);
+        logServerError("voices.load_failed", err, "warn");
       }
     }
 

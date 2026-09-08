@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import fs from "fs";
 import path from "path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -39,7 +40,7 @@ export function loadHeyGenOAuthStore(): HeyGenOAuthStore {
       return JSON.parse(fs.readFileSync(STORE_PATH, "utf-8"));
     }
   } catch (err) {
-    console.error("[HeyGen OAuth] failed to read auth store", err);
+    logServerError("provider.auth_read_failed", err);
   }
   return {};
 }
@@ -49,7 +50,7 @@ export function saveHeyGenOAuthStore(patch: Partial<HeyGenOAuthStore>): HeyGenOA
   try {
     fs.writeFileSync(STORE_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
-    console.error("[HeyGen OAuth] failed to write auth store", err);
+    logServerError("provider.auth_write_failed", err);
   }
   return next;
 }

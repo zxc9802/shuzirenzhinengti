@@ -14,6 +14,9 @@ export function sanitizePublicText(value: unknown, fallback = "处理失败，�
   if (typeof value !== "string" || !value.trim()) return fallback;
 
   let text = value
+    .replace(/\b(?:Bearer|Basic)\s+[^\s,"'}]+/gi, "[凭据已隐藏]")
+    .replace(/\b(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API[_-]?KEY|ACCESS[_-]?KEY)|api[_-]?key|token|secret|password)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi, "[凭据已隐藏]")
+    .replace(/\bsk-[a-z0-9_-]{8,}\b/gi, "[凭据已隐藏]")
     .replace(/https?:\/\/[^\s<>"')\]]+/gi, "[内部资源]")
     .replace(/\b(?:task|job|request|video|media|lipsync)[_-]?id\s*[:=]\s*[\w-]+/gi, "内部编号已隐藏")
     .replace(/\(\s*id\s*:\s*[a-z0-9_-]+\s*\)/gi, "([内部编号])")

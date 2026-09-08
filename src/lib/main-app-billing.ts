@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { logServerError } from "./server/safe-log";
+import { estimateScriptDuration } from "./billing-estimate";
+export { CHARACTERS_PER_SECOND, estimateScriptDuration } from "./billing-estimate";
 import {
   getMainAppSessionCookieName,
   getMainAppUrl,
@@ -10,7 +13,6 @@ import {
 export const POINTS_PER_SECOND = 20;
 export const CNY_PER_SECOND = 0.2;
 export const POINTS_PER_CNY = 100;
-export const CHARACTERS_PER_SECOND = 4.4;
 
 export class MainAppBillingError extends Error {
   readonly status: number;
@@ -61,21 +63,28 @@ export function calculateRequiredPoints(durationSeconds: number): number {
   return Math.ceil(seconds * POINTS_PER_SECOND);
 }
 
+export function assertTaskCreditCoverage(
+  billing: { isExternalUser: boolean; status: string; reservedPoints?: number } | undefined,
+  durationSeconds: number,
+): void {
+  if (!billing?.isExternalUser) return;
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 ||
+    billing.status !== "reserved" || !Number.isSafeInteger(billing.reservedPoints) ||
+    (billing.reservedPoints || 0) < calculateRequiredPoints(durationSeconds)) {
+    throw new MainAppBillingError(
+      "实际配音超出预留额度，请缩短文案后重试",
+      402,
+      "BILLING_RESERVATION_TOO_SMALL",
+    );
+  }
+}
+
 /**
  * 根据视频/音频时长计算人民币金额（0.20 元/秒）
  */
 export function calculateCostCny(durationSeconds: number): number {
   const seconds = Math.max(0, Number(durationSeconds) || 0);
   return Number((seconds * CNY_PER_SECOND).toFixed(2));
-}
-
-/**
- * 根据文本字数预估语音口播时长（约 4.4 字/秒，最低 3 秒）
- */
-export function estimateScriptDuration(scriptText: string): number {
-  const text = (scriptText || "").trim();
-  if (!text) return 0;
-  return Math.max(3, Math.ceil(text.length / CHARACTERS_PER_SECOND));
 }
 
 /**
@@ -169,14 +178,13 @@ async function postBillingApi(
     };
 
     if (!response.ok || payload.success !== true) {
-      const errorMsg =
-        payload.error ||
-        payload.message ||
-        `主站积分结算服务异常 (HTTP ${response.status})`;
+      logServerError(`billing.${options.action}_rejected`, { status: response.status });
+      const insufficient = response.status === 402 ||
+        payload.code === "INSUFFICIENT_CREDITS" || payload.code === "INSUFFICIENT_POINTS";
       return {
         success: false,
-        error: errorMsg,
-        code: payload.code || `HTTP_${response.status}`,
+        error: insufficient ? "积分余额不足" : "积分服务暂时不可用，请稍后重试",
+        code: insufficient ? "INSUFFICIENT_POINTS" : "BILLING_SERVICE_UNAVAILABLE",
       };
     }
 
@@ -185,9 +193,10 @@ async function postBillingApi(
       data: payload.data,
     };
   } catch (err: any) {
+    logServerError(`billing.${options.action}_request_failed`, err);
     return {
       success: false,
-      error: err.message || "连接主站积分服务超时",
+      error: "积分服务连接失败，请稍后重试",
       code: "NETWORK_ERROR",
     };
   }
@@ -205,6 +214,7 @@ export async function reserveMainAppCredits(input: {
   requestId: string;
   chargeRequired: boolean;
   requiredPoints: number;
+  reservedPoints: number;
   estimatedDuration: number;
   costCny: number;
   pointsBalance?: number;
@@ -218,14 +228,19 @@ export async function reserveMainAppCredits(input: {
     : 0;
   const requestId = randomUUID();
 
-  if (!chargeRequired || !input.user.id) {
+  if (!chargeRequired) {
     return {
       requestId,
       chargeRequired: false,
       requiredPoints: 0,
+      reservedPoints: 0,
       estimatedDuration: input.estimatedDuration,
       costCny: 0,
     };
+  }
+
+  if (!input.user.id || !input.sessionToken || !Number.isFinite(input.estimatedDuration) || input.estimatedDuration <= 0) {
+    throw new MainAppBillingError("任务缺少有效计费信息", 400, "BILLING_IDENTITY_MISSING");
   }
 
   // 调用主站进行积分预留
@@ -250,22 +265,26 @@ export async function reserveMainAppCredits(input: {
         "INSUFFICIENT_POINTS",
       );
     }
-    // 其他错误或主站未配置时记录但不阻断本地测试环境
-    if (process.env.NODE_ENV === "development" && !process.env.MAIN_APP_SSO_CLIENT_SECRET) {
-      console.warn("[Billing] Dev mode: billing reserve failed, skipped.", result.error);
-    } else {
-      throw new MainAppBillingError(
-        result.error || "主站积分预留失败",
-        400,
-        result.code || "BILLING_RESERVE_FAILED",
-      );
-    }
+    throw new MainAppBillingError(
+      "积分预留失败，请稍后重试",
+      503,
+      "BILLING_RESERVE_FAILED",
+    );
+  }
+
+  const reservedPoints = Number(result.data?.reservedCredits);
+  if (!Number.isSafeInteger(reservedPoints) || reservedPoints < requiredPoints ||
+    result.data?.requestId !== requestId || result.data?.chargeRequired !== true) {
+    // No paid work has started. Release this same reservation, never create another one.
+    await releaseMainAppCredits({ userId: input.user.id, requestId, sessionToken: input.sessionToken });
+    throw new MainAppBillingError("积分预留未得到确认，请稍后重试", 503, "BILLING_RESERVATION_UNCONFIRMED");
   }
 
   return {
     requestId,
     chargeRequired: true,
     requiredPoints,
+    reservedPoints,
     estimatedDuration: input.estimatedDuration,
     costCny,
     pointsBalance: result.data?.pointsBalance,
@@ -311,9 +330,9 @@ export async function settleMainAppCredits(input: {
 
   if (!result.success) {
     throw new MainAppBillingError(
-      result.error || "主站积分结算失败",
+      "积分结算暂未完成，请稍后恢复任务",
       503,
-      result.code || "BILLING_SETTLEMENT_FAILED",
+      "BILLING_SETTLEMENT_FAILED",
     );
   }
 
@@ -349,9 +368,9 @@ export async function releaseMainAppCredits(input: {
   });
   if (!result.success) {
     throw new MainAppBillingError(
-      result.error || "主站积分释放失败",
+      "积分释放暂未完成，请稍后重试",
       503,
-      result.code || "BILLING_RELEASE_FAILED",
+      "BILLING_RELEASE_FAILED",
     );
   }
 }

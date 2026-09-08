@@ -15,6 +15,19 @@ import { sanitizePublicText } from "@/lib/server/public-sanitizer";
 
 export { sanitizePublicText } from "@/lib/server/public-sanitizer";
 
+const PUBLIC_ERRORS: Record<string, string> = {
+  BILLING_RESERVATION_TOO_SMALL: "实际配音超出预留额度，请缩短文案后重试",
+  BILLING_SETTLEMENT_FAILED: "结果已生成，积分结算暂未完成，请稍后恢复任务",
+  MEDIA_FIT_MISMATCH: "素材视频长于配音，请选择智能适配后重试",
+};
+
+const PUBLIC_LOG_FALLBACK = {
+  info: "任务状态已更新",
+  warn: "处理遇到问题，正在尝试恢复",
+  error: "处理失败，请稍后重试",
+  success: "处理步骤已完成",
+};
+
 export function isTaskOutputDeliverable(task: TaskItem): boolean {
   if (task.status !== "completed") return false;
   return !task.billing?.isExternalUser || task.billing.status === "settled";
@@ -68,7 +81,7 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
     logs: (task.logs || []).map((entry) => ({
       timestamp: entry.timestamp,
       level: entry.level,
-      message: sanitizePublicText(entry.message, "任务状态已更新"),
+      message: sanitizePublicText(entry.publicMessage, PUBLIC_LOG_FALLBACK[entry.level]),
     })),
     billing: task.billing
       ? {
@@ -111,7 +124,11 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
       sha256Audio: task.results.sha256Audio,
     },
     recoverable,
-    error: task.error ? sanitizePublicText(task.error) : undefined,
+    error: task.error
+      ? Object.hasOwn(PUBLIC_ERRORS, task.errorCode || "")
+        ? PUBLIC_ERRORS[task.errorCode!]
+        : "处理失败，请稍后重试"
+      : undefined,
   };
 }
 

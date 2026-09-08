@@ -275,7 +275,7 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error("HeyGen MCP Server Fatal Error:", err);
+main().catch(() => {
+  console.error("Media processing server failed to start.");
   process.exit(1);
 });

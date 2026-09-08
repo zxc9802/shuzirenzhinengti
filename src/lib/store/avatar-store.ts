@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -91,11 +92,11 @@ function persistStore(syncCloud = true) {
     // Mirror to cloud object storage for 100% persistent cloud recovery
     if (syncCloud && CosService.isConfigured()) {
       CosService.saveJsonToCos(COS_AVATARS_KEY, memoryAvatars).catch((err) => {
-        console.warn("AvatarStore COS sync error:", err.message);
+        logServerError("avatars.sync_failed", err, "warn");
       });
     }
   } catch (e) {
-    console.error("Failed to persist avatars store", e);
+    logServerError("avatars.persist_failed", e);
   }
 }
 
@@ -313,7 +314,7 @@ export const AvatarStore = {
         }
         hasLoadedFromCloud = true;
       } catch (err: any) {
-        console.warn("Failed to load avatars from cloud:", err.message);
+        logServerError("avatars.load_failed", err, "warn");
       }
     }
 
@@ -323,7 +324,7 @@ export const AvatarStore = {
           hasReconciledLegacyAvatars = true;
         })
         .catch((err: any) => {
-          console.warn("Failed to reconcile legacy avatars from cloud:", err.message);
+          logServerError("avatars.reconcile_failed", err, "warn");
         })
         .finally(() => {
           legacyReconciliationPromise = null;

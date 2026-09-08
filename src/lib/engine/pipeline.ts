@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
@@ -22,6 +23,7 @@ import {
 } from "../server/media-response";
 import {
   calculateRequiredPoints,
+  assertTaskCreditCoverage,
   calculateCostCny,
   settleMainAppCredits,
   releaseMainAppCredits,
@@ -37,24 +39,9 @@ export async function runDigitalHumanPipeline(
 
   const config = getAppConfig();
   const providerRoot = path.join(process.cwd(), ".runtime", "provider-input");
-  fs.mkdirSync(providerRoot, { recursive: true });
-  for (const entry of fs.readdirSync(providerRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^[a-f0-9]{48}$/.test(entry.name)) continue;
-    const candidate = path.join(providerRoot, entry.name);
-    try {
-      if (Date.now() - fs.statSync(candidate).mtimeMs > 6 * 60 * 60 * 1000) {
-        fs.rmSync(candidate, { recursive: true, force: true });
-      }
-    } catch {}
-  }
-  if (CosService.isConfigured()) {
-    await CosService.cleanupExpiredObjects("provider-input/", 24 * 60 * 60 * 1000).catch(() => 0);
-  }
   const jobDir = path.join(config.storageDir, taskId);
-  fs.mkdirSync(jobDir, { recursive: true });
   const providerToken = crypto.randomBytes(24).toString("hex");
   const providerInputDir = path.join(providerRoot, providerToken);
-  fs.mkdirSync(providerInputDir, { recursive: true });
   const providerCosKeys: string[] = [];
   const baseUrl = config.publicBaseUrl.replace(/\/$/, "");
 
@@ -76,9 +63,10 @@ export async function runDigitalHumanPipeline(
     }
   };
 
-  const log = (msg: string, level: "info" | "warn" | "error" | "success" = "info") => {
-    TaskStore.addLog(taskId, msg, level);
+  const log = (msg: string, level: "info" | "warn" | "error" | "success" = "info", publicMessage = msg) => {
+    TaskStore.addLog(taskId, msg, level, publicMessage);
   };
+  const logProvider = (msg: string) => log(msg, "info", "处理服务运行中，请稍候");
   const ensureTaskActive = () => {
     if (TaskStore.isDeleted(taskId)) throw new Error("任务已删除");
   };
@@ -94,6 +82,21 @@ export async function runDigitalHumanPipeline(
   let currentStep: TaskStep = "tts";
 
   try {
+    fs.mkdirSync(providerRoot, { recursive: true });
+    for (const entry of fs.readdirSync(providerRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^[a-f0-9]{48}$/.test(entry.name)) continue;
+      const candidate = path.join(providerRoot, entry.name);
+      try {
+        if (Date.now() - fs.statSync(candidate).mtimeMs > 6 * 60 * 60 * 1000) {
+          fs.rmSync(candidate, { recursive: true, force: true });
+        }
+      } catch {}
+    }
+    if (CosService.isConfigured()) {
+      await CosService.cleanupExpiredObjects("provider-input/", 24 * 60 * 60 * 1000).catch(() => 0);
+    }
+    fs.mkdirSync(jobDir, { recursive: true });
+    fs.mkdirSync(providerInputDir, { recursive: true });
     ensureTaskActive();
     currentStep = "tts";
     TaskStore.update(taskId, {
@@ -137,6 +140,10 @@ export async function runDigitalHumanPipeline(
     log("📹 正在探测原始口播视频参数...");
     const originalProbe = await probeMedia(localVideoPath);
     ensureTaskActive();
+    if (!originalProbe.width || !originalProbe.height) {
+      throw new Error("素材没有有效的视频画面");
+    }
+    assertTaskCreditCoverage(task.billing, task.billing?.estimatedDuration || 0);
     log(
       `原始视频信息: 分辨率 ${originalProbe.width}x${originalProbe.height} | 时长 ${originalProbe.durationSeconds.toFixed(
         2
@@ -173,7 +180,7 @@ export async function runDigitalHumanPipeline(
       emotionIntensity: task.inputs.emotionIntensity,
       toneProfile: task.inputs.toneProfile,
       outDir: jobDir,
-      onLog: (m) => log(`[TTS] ${m}`),
+      onLog: (m) => logProvider(`[TTS] ${m}`),
       cacheScope: `${task.userId || "local"}:${task.inputs.speakerVoiceId || "default"}`,
     });
     ensureTaskActive();
@@ -207,6 +214,14 @@ export async function runDigitalHumanPipeline(
         2
       )}s, 视频指纹: ${sha256Video.slice(0, 16)}...`,
       "success"
+    );
+
+    // Check the confirmed hold before any lip-sync engine can spend credits.
+    // One second covers frame/container rounding in the final mux.
+    ensureTaskActive();
+    assertTaskCreditCoverage(
+      TaskStore.get(taskId)?.billing || task.billing,
+      Math.ceil(Math.max(ttsResult.selectedDuration, prepResult.duration)) + 1,
     );
 
     // 4. Step: Lip-sync submission (HeyGen / PixVerse / VEED)
@@ -249,7 +264,7 @@ export async function runDigitalHumanPipeline(
         ensureTaskActive();
         log("✅ 预处理音视频直链已就绪 (云端存储)", "success");
       } catch (cosErr: any) {
-        console.warn("COS sync for inputs failed, fallback to baseUrl:", cosErr.message);
+        logServerError("pipeline.input_sync_failed", cosErr, "warn");
       }
     }
 
@@ -281,7 +296,7 @@ export async function runDigitalHumanPipeline(
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
           existingChunks: TaskStore.get(taskId)?.results.lipsyncChunks,
-          onLog: (m) => log(m),
+          onLog: logProvider,
           onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId, creditsUsed }) => {
             markProviderCommitted();
@@ -336,7 +351,7 @@ export async function runDigitalHumanPipeline(
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
           objectKeyPrefix: `jobs/${taskId}`,
-          onLog: (m) => log(m),
+          onLog: logProvider,
           onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId }) => {
             markProviderCommitted();
@@ -374,7 +389,7 @@ export async function runDigitalHumanPipeline(
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
           submissionTitle,
-          onLog: (m) => log(m),
+          onLog: logProvider,
           onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId }) => {
             markProviderCommitted();
@@ -510,7 +525,7 @@ export async function runDigitalHumanPipeline(
         evidenceJsonUrl = await CosService.uploadFile(evidencePath, cosEvidenceKey);
         ensureTaskActive();
       } catch (cosErr: any) {
-        log(`⚠️ 云端存储上传警告: ${cosErr.message}，降级使用本地直链`, "warn");
+        log(`⚠️ 云端存储上传警告: ${cosErr.message}，降级使用本地直链`, "warn", "云端存储暂不可用，已保留本地结果");
       }
     }
 
@@ -558,7 +573,8 @@ export async function runDigitalHumanPipeline(
     log("🎉 全部流程执行成功！数字人对口型成片已就绪。", "success");
   } catch (err: any) {
     const errorMsg = err.message || "未知流水线异常";
-    log(`❌ 流程发生错误: ${errorMsg}`, "error");
+    logServerError("pipeline.failed", err);
+    log(`❌ 流程发生错误: ${errorMsg}`, "error", "处理失败，请稍后重试");
 
     // Release reserved billing credits on failure
     const currentTaskData = TaskStore.get(taskId) || task;
@@ -581,7 +597,7 @@ export async function runDigitalHumanPipeline(
         });
         log("↩️ 流水线异常中断，预留积分已全额解冻返还", "info");
       } catch (releaseErr: any) {
-        console.warn("Failed to release points on error:", releaseErr);
+        logServerError("billing.release_failed", releaseErr, "warn");
       }
     }
 
@@ -590,6 +606,7 @@ export async function runDigitalHumanPipeline(
       step: "error",
       failedStep: currentStep,
       error: errorMsg,
+      errorCode: typeof err.code === "string" ? err.code : undefined,
     });
   } finally {
     try {

@@ -1,3 +1,5 @@
+import { logServerError } from "./server/safe-log";
+
 const PRODUCT = "shuziren";
 const COOKIE_NAME = "qycm_shuziren_sso_v2";
 const INTENT_COOKIE_NAME = "qycm_shuziren_sso_intent_v1";
@@ -375,7 +377,7 @@ export async function validateMainAppSessionDetails(
       const payload = await response.json().catch(() => null);
       const user = payload?.data?.user;
       if (payload?.success !== true || !isMainAppUser(user)) {
-        console.error("[SSO] Session validation response omitted authoritative user claims.");
+        logServerError("sso.invalid_claims");
         return { status: "invalid", session: null };
       }
       const refreshedSession: MainAppSession = {
@@ -386,21 +388,15 @@ export async function validateMainAppSessionDetails(
       return { status: "valid", session: refreshedSession };
     }
     if (response.status === 401 || response.status === 403) {
-      console.error(
-        `[SSO] Session validation rejected by main site: HTTP ${response.status} url=${probeUrl}`
-      );
+      logServerError("sso.session_rejected", { status: response.status });
       return { status: "invalid", session: null };
     }
 
-    console.error(
-      `[SSO] Session validation unavailable: HTTP ${response.status} url=${probeUrl}`
-    );
+    logServerError("sso.session_unavailable", { status: response.status });
     return { status: "unavailable", session: null };
   } catch (err: any) {
     // 出网失败 / DNS / 超时不等于凭证失效，调用方必须避免清 Cookie 重登。
-    console.error(
-      `[SSO] Session validation request failed: ${err?.message || err} url=${probeUrl}`
-    );
+    logServerError("sso.session_request_failed", err);
     return { status: "unavailable", session: null };
   }
 }

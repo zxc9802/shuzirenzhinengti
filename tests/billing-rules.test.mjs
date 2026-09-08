@@ -4,6 +4,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const billing = await import("../src/lib/main-app-billing.ts");
+const { estimateReservationDuration } = await import("../src/lib/billing-estimate.ts");
+
+test("reservation estimates include a margin without charging for the full avatar source length", () => {
+  assert.equal(estimateReservationDuration("你好"), 6);
+  assert.equal(estimateReservationDuration("一".repeat(44)), 15);
+  assert.equal(estimateReservationDuration(""), 0);
+});
 
 test("rate constants are mutually consistent (20 points/s == 0.20 CNY/s at 100 points per CNY)", () => {
   assert.equal(billing.POINTS_PER_SECOND, 20);
@@ -97,6 +104,26 @@ test("MainAppBillingError carries an HTTP status and machine-readable code for t
   const custom = new billing.MainAppBillingError("积分不足", 402, "INSUFFICIENT_BALANCE");
   assert.equal(custom.status, 402);
   assert.equal(custom.code, "INSUFFICIENT_BALANCE");
+});
+
+test("external reservations require the main ledger to confirm sufficient held credits", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const data of [{}, { reservedCredits: 59 }, { reservedCredits: 60, chargeRequired: false }]) {
+      globalThis.fetch = async () => Response.json({ success: true, data });
+      await assert.rejects(billing.reserveMainAppCredits({
+        user: { id: "owner", role: "member" }, sessionToken: "fake", estimatedDuration: 3,
+      }), error => error.code === "BILLING_RESERVATION_UNCONFIRMED");
+    }
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({ success: true, data: { reservedCredits: 60, requestId: body.requestId, chargeRequired: true } });
+    };
+    const reserved = await billing.reserveMainAppCredits({
+      user: { id: "owner", role: "member" }, sessionToken: "fake", estimatedDuration: 3,
+    });
+    assert.equal(reserved.reservedPoints, 60);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("settle and release fail closed unless the main ledger returns success=true", async () => {

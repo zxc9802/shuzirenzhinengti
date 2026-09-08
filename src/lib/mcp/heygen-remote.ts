@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -150,7 +151,7 @@ export async function verifyHeyGenRemoteSession(redirectUrl?: string): Promise<H
         const raw = await client.callTool({ name: "get_current_user", arguments: {} });
         user = extractUserProfile(parseToolText(raw));
       } catch (err) {
-        console.warn("[HeyGen OAuth] get_current_user failed", err);
+        logServerError("provider.profile_failed", err, "warn");
       }
     }
 

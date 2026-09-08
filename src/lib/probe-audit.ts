@@ -1,3 +1,4 @@
+import { logServerError } from "./server/safe-log";
 import fs from "fs";
 import path from "path";
 import type { NextRequest } from "next/server";
@@ -204,7 +205,7 @@ async function notifyWebhook(record: ProbeAuditRecord) {
 
 export function recordProbe(req: NextRequest, finding: ProbeFinding): ProbeAuditRecord {
   const record = toRecord(req, finding);
-  console.warn("[probe-audit]", JSON.stringify(record));
+  logServerError("security.probe_detected", undefined, "warn");
   if (allowDiskWrite(record.ip)) {
     persist(record);
     void notifyWebhook(record);

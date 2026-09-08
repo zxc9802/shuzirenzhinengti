@@ -1,3 +1,4 @@
+import { logServerError } from "@/lib/server/safe-log";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import crypto from "crypto";
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
         try { fs.unlinkSync(thumbPath); } catch {}
       } catch (cosErr: any) {
         await CosService.deleteObject(cosThumbKey).catch(() => undefined);
-        console.warn("Upload re-extracted thumbnail to COS error:", cosErr.message);
+        logServerError("cover.upload_failed", cosErr, "warn");
       }
     }
 
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
     } else if (thumbPath) {
       try { fs.unlinkSync(thumbPath); } catch {}
     }
-    console.error("Extract cover error:", err);
+    logServerError("cover.extract_failed", err);
     return NextResponse.json(
       { error: "截取封面异常" },
       { status: 500 }

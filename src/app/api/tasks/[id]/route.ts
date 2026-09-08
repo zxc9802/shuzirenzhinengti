@@ -1,3 +1,4 @@
+import { logServerError } from "@/lib/server/safe-log";
 import { NextRequest, NextResponse } from "next/server";
 import { CosService } from "@/lib/cos";
 import fs from "fs";
@@ -46,7 +47,7 @@ export async function GET(
         task = await recoverStuckLipsyncTask(id, access.session?.token);
       }
     } catch (err) {
-      console.warn("Auto-recover from COS skipped:", err);
+      logServerError("tasks.auto_recovery_failed", err, "warn");
     }
   }
 

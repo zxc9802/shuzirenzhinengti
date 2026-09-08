@@ -334,6 +334,5 @@ const httpServer = http.createServer(async (req, res) => {
 });
 
 httpServer.listen(PORT, HOST, () => {
-  console.log(`🚀 HeyGen Precision MCP SSE Server running at http://${HOST}:${PORT}`);
-  console.log(`   SSE Endpoint: http://${HOST}:${PORT}/sse`);
+  console.log(`Media processing server listening on port ${PORT}`);
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { estimateReservationDuration } from "@/lib/billing-estimate";
 import {
   Play,
   RotateCcw,
@@ -346,6 +347,7 @@ export default function StudioPage() {
             {scriptText.trim().length > 0 && (() => {
               const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
               const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
+              const reservedPoints = Math.ceil(estimateReservationDuration(scriptText) * (userSession?.billing?.ratePerSecond ?? 20));
               const estCny = (estDuration * 0.2).toFixed(2);
               const isExternal =
                 userSession?.billing?.isExternal ??
@@ -355,7 +357,7 @@ export default function StudioPage() {
               const isInsufficient =
                 isExternal &&
                 typeof userBalance === "number" &&
-                userBalance < estPoints;
+                userBalance < reservedPoints;
 
               return (
                 <div className="mt-2.5 space-y-2">
@@ -388,6 +390,7 @@ export default function StudioPage() {
                     </div>
                   </div>
 
+                  {isExternal && <p className="text-[11px] text-zinc-400">先预留 {reservedPoints.toLocaleString()} 积分，按成片实际时长结算，多余积分退回。</p>}
                   {isInsufficient && (
                     <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
                       <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
@@ -396,7 +399,7 @@ export default function StudioPage() {
                         {typeof userBalance === "number"
                           ? userBalance.toLocaleString()
                           : 0}{" "}
-                        积分) 不足，本次需要 {estPoints.toLocaleString()}{" "}
+                        积分) 不足，本次需预留 {reservedPoints.toLocaleString()}{" "}
                         积分，请先前往主站充值。
                       </span>
                     </div>
@@ -573,7 +576,7 @@ export default function StudioPage() {
 
           {/* Action Trigger */}
           {(() => {
-            const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
+            const estDuration = estimateReservationDuration(scriptText);
             const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
             const isExternal =
               userSession?.billing?.isExternal ??
@@ -591,7 +594,7 @@ export default function StudioPage() {
                   {isRunning
                     ? "流水线正在运行中..."
                     : isExternal && scriptText.trim()
-                    ? `开始执行数字人对口型流水线 (预估 ${estPoints.toLocaleString()} 积分)`
+                    ? `开始执行数字人对口型流水线 (预留 ${estPoints.toLocaleString()} 积分)`
                     : "开始执行数字人对口型流水线"}
                 </span>
                 <ArrowRight className="h-4 w-4 text-blue-200 opacity-80 ml-1" />

@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import fs from "fs";
 import { downloadFileToDisk } from "./download-file";
 import { providerUrlPolicy } from "../server/outbound-url-policy";
@@ -228,7 +229,7 @@ export async function generateIndexTTS(
       "utf-8"
     );
   } catch (e: any) {
-    console.warn("Failed to write to global cache:", e.message);
+    logServerError("speech.cache_write_failed", e, "warn");
   }
 
   onLog(

@@ -1,3 +1,4 @@
+import { logServerError } from "../server/safe-log";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -243,21 +244,23 @@ export async function prepareSourceVideo(
     // Video is shorter than audio -> loop video to match audio length
     const loopCount = Math.ceil(targetDurationSeconds / videoDuration) + 1;
     args.push("-stream_loop", `${loopCount}`, "-i", inputVideoPath);
-    args.push("-t", `${targetDurationSeconds}`);
   } else if (videoDuration > targetDurationSeconds + 0.5) {
     if (fitMode === "preserve") {
-      throw new Error(
+      throw Object.assign(new Error(
         `Video duration (${videoDuration.toFixed(1)}s) is longer than narration (${targetDurationSeconds.toFixed(1)}s), but fitMode is set to preserve.`
-      );
+      ), { code: "MEDIA_FIT_MISMATCH" });
     }
     // Smart trim to target duration
     args.push("-i", inputVideoPath);
-    args.push("-t", `${targetDurationSeconds}`);
   } else {
     args.push("-i", inputVideoPath);
-    args.push("-t", `${targetDurationSeconds}`);
   }
 
+  // Declare every input before output options; otherwise -vf applies to lavfi.
+  if (!probe.hasAudio) {
+    args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
+  }
+  args.push("-t", `${targetDurationSeconds}`);
   args.push("-vf", vf);
   args.push("-c:v", "libx264", "-preset", "fast", "-crf", "18");
 
@@ -265,7 +268,6 @@ export async function prepareSourceVideo(
   if (probe.hasAudio) {
     args.push("-c:a", "aac", "-b:a", "192k");
   } else {
-    args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
     args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
   }
 
@@ -501,7 +503,7 @@ export async function extractVideoThumbnail(
       return outputImagePath;
     }
   } catch (err: any) {
-    console.warn(`Seek at ${seekSeconds}s failed, trying fallback:`, err.message);
+    logServerError("media.seek_failed", err, "warn");
   }
 
   // Attempt 2: Fallback to 0.3s
@@ -539,7 +541,7 @@ export async function extractVideoThumbnail(
       return outputImagePath;
     }
   } catch (err: any) {
-    console.warn("Fallback to 0.3s failed:", err.message);
+    logServerError("media.seek_fallback_failed", err, "warn");
   }
 
   // Attempt 3: Fallback to very first frame (0.01s)

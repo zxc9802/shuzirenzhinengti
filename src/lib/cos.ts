@@ -1,3 +1,4 @@
+import { logServerError } from "./server/safe-log";
 import COS from "cos-nodejs-sdk-v5";
 import fs from "fs";
 import path from "path";
@@ -259,7 +260,7 @@ export const CosService = {
         },
         (err, data) => {
           if (err) {
-            console.error("cloud object storage upload error:", err);
+            logServerError("storage.upload_failed", err);
             reject(new Error(`云端存储上传失败: ${err.message || JSON.stringify(err)}`));
             return;
           }
@@ -364,7 +365,7 @@ export const CosService = {
         },
         (err) => {
           if (err) {
-            console.warn(`Failed to sync JSON to COS (${cleanKey}):`, err.message);
+            logServerError("storage.json_sync_failed", err, "warn");
             reject(err);
           } else {
             resolve();
