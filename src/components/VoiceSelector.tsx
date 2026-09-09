@@ -21,7 +21,7 @@ import { uploadMediaFile } from "@/lib/client-media-upload";
 
 interface VoiceSelectorProps {
   selectedVoiceId?: string;
-  onSelectVoice: (voice: PublicVoiceItem) => void;
+  onSelectVoice: (voice: PublicVoiceItem | null) => void;
   disabled?: boolean;
 }
 
@@ -149,9 +149,10 @@ export default function VoiceSelector({
       const resp = await fetch(`/api/voices?id=${id}`, { method: "DELETE" });
       const data = await resp.json();
       if (data.success) {
-        setVoices((prev) => prev.filter((v) => v.id !== id));
-        if (selectedVoiceId === id && voices.length > 0) {
-          onSelectVoice(voices[0]);
+        const remaining = voices.filter(voice => voice.id !== id);
+        setVoices(prev => prev.filter(voice => voice.id !== id));
+        if (selectedVoiceId === id) {
+          onSelectVoice(remaining.find(voice => voice.isDefault) || remaining[0] || null);
         }
       }
     } catch (err) {

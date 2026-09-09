@@ -119,11 +119,15 @@ export async function POST(req: NextRequest) {
     });
     if (!claimPendingUpload({ key: body.uploadKey, userId: access.userId })) {
       VoiceStore.delete(created.id);
-      await deleteOwnedUploadSource({
-        source: audioPath || audioSource,
-        userId: access.userId,
-        folder: "voices",
-      });
+      // A duplicate request can reference audio already owned by the first voice.
+      // Only the converted file created by this invocation may be removed.
+      if (derivedAudioSource) {
+        await deleteOwnedUploadSource({
+          source: derivedAudioSource,
+          userId: access.userId,
+          folder: "voices",
+        });
+      }
       return NextResponse.json({ error: "上传凭证已过期或已被使用" }, { status: 409 });
     }
     derivedAudioSource = "";

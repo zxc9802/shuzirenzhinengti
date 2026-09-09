@@ -3,7 +3,9 @@ import path from "path";
 import { CosService } from "../cos";
 import { resolveLipsyncProvider } from "../lipsync-provider";
 import { TaskItem, TaskStore } from "../store/task-store";
-import { finalizeVideo, probeMedia, sha256File } from "./ffmpeg";
+import { concatVideos, finalizeVideo, probeMedia, sha256File } from "./ffmpeg";
+import { planLipsyncChunks } from "./lipsync-chunks";
+import { withTaskExecution } from "./task-execution";
 import { downloadFileToDisk } from "./download-file";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
 import { downloadPixverseResult } from "./pixverse-ingest";
@@ -18,6 +20,32 @@ import { providerUrlPolicy } from "../server/outbound-url-policy";
 import { downloadTrustedMediaToFile } from "../server/media-response";
 
 const LIPSYNC_JOB_RE = /任务已建立 \(ID:\s*([^，)\s]+)\)/;
+
+type SavedChunk = NonNullable<TaskItem["results"]["lipsyncChunks"]>[number];
+
+function savedChunks(task: TaskItem): SavedChunk[] {
+  if (task.results.lipsyncChunks?.length) return task.results.lipsyncChunks;
+  const savedIds = (task.results.heygenLipsyncId || "").split(",").map(id => id.trim()).filter(Boolean);
+  const loggedIds = [...new Set((task.logs || []).flatMap(entry => {
+    const match = entry.message.match(LIPSYNC_JOB_RE);
+    return match ? [match[1]] : [];
+  }))];
+  const ids = savedIds.length > 1 ? savedIds : loggedIds.length > 1 ? loggedIds : savedIds.length ? savedIds : loggedIds;
+  if (!ids.length && savedResultUrl(task)) ids.push("");
+  return ids.map((lipsyncId, index) => ({
+    index, lipsyncId: lipsyncId || undefined, status: "created",
+    resultUrl: ids.length === 1 ? savedResultUrl(task) : undefined,
+  }));
+}
+
+async function verifyVideoDuration(file: string, expectedSeconds: number) {
+  const probe = await probeMedia(file);
+  const seconds = probe.videoDurationSeconds ?? (!probe.hasAudio ? probe.durationSeconds : undefined);
+  if (!probe.width || !Number.isFinite(seconds) || Math.abs(seconds! - expectedSeconds) > 0.5) {
+    throw new Error("恢复的视频画面不完整，请稍后重试");
+  }
+  return probe;
+}
 
 function taskLipsyncProvider(task: TaskItem) {
   return resolveLipsyncProvider(
@@ -52,6 +80,7 @@ export function isRecoverableLipsyncTask(task: TaskItem): boolean {
     task.results?.finalVideoUrl ||
       extractPixverseJobId(task) ||
       savedResultUrl(task) ||
+      task.results.lipsyncChunks?.length ||
       (task.logs || []).some((entry) => entry.message.includes("正在下载成片"))
   );
 }
@@ -64,7 +93,10 @@ async function markCompleted(
 ): Promise<TaskItem> {
   const task = TaskStore.get(taskId);
   if (!task) throw new Error("任务不存在，无法写入恢复结果");
-  const duration = results.videoDuration || 0;
+  const duration = results.videoDuration;
+  if (!Number.isFinite(duration) || !duration || duration <= 0) {
+    throw new Error("成片时长无效，不能结算交付");
+  }
   const chargedPoints =
     results.chargedPoints ??
     (task.billing?.isExternalUser
@@ -95,13 +127,14 @@ async function markCompleted(
     pointsBalanceAfter = settlement.pointsBalance;
   }
 
-  TaskStore.addLog(taskId, message, "success");
+  TaskStore.addLog(taskId, message, "success", "成片已恢复，任务已完成");
 
   const updated = TaskStore.update(taskId, {
     status: "completed",
     step: "done",
     progress: 100,
     error: undefined,
+    errorCode: undefined,
     billing: task.billing
       ? {
           ...task.billing,
@@ -109,7 +142,7 @@ async function markCompleted(
           chargedPoints,
           costCny,
           pointsBalanceAfter,
-          status: "settled",
+          status: task.billing.isExternalUser ? "settled" : "not_applicable",
         }
       : undefined,
     results: {
@@ -123,53 +156,6 @@ async function markCompleted(
     throw new Error("任务不存在，无法写入恢复结果");
   }
   return updated;
-}
-
-async function completeFromCosFiles(
-  task: TaskItem,
-  sessionToken?: string,
-): Promise<TaskItem | null> {
-  if (!CosService.isConfigured()) return null;
-
-  const finalKey = `jobs/${task.id}/final.mp4`;
-  const audioKey = `jobs/${task.id}/voice-track.wav`;
-  const evidenceKey = `jobs/${task.id}/production-report.json`;
-  const hasFinal = await CosService.objectExists(finalKey);
-  if (!hasFinal) return null;
-
-  const finalVideoUrl = CosService.getPublicUrl(finalKey);
-  const exactAudioUrl = CosService.getPublicUrl(audioKey);
-  const evidenceJsonUrl = CosService.getPublicUrl(evidenceKey);
-  const jobId = extractPixverseJobId(task);
-  let evidence: any = null;
-  try {
-    evidence = await CosService.getJsonFromCos<any>(evidenceKey);
-  } catch {
-    evidence = null;
-  }
-
-  return markCompleted(
-    task.id,
-    {
-      originalVideoUrl: task.inputs.videoUrl || task.results.originalVideoUrl,
-      finalVideoUrl,
-      exactAudioUrl,
-      evidenceJsonUrl,
-      heygenLipsyncId: jobId || task.results.heygenLipsyncId || evidence?.lipsync?.lipsync_id,
-      lipsyncProvider: taskLipsyncProvider(task),
-      lipsyncCredits: task.results.lipsyncCredits || evidence?.lipsync?.credits,
-      pixverseResultUrl: task.results.pixverseResultUrl,
-      heygenResultUrl: task.results.heygenResultUrl,
-      veedResultUrl: task.results.veedResultUrl,
-      videoDuration:
-        task.results.videoDuration || evidence?.media?.video?.final_duration_seconds,
-      audioDuration: task.results.audioDuration,
-      resolution: task.results.resolution || evidence?.media?.video?.resolution,
-      fps: task.results.fps || evidence?.media?.video?.fps,
-    },
-    "已从云端成片恢复任务并完成权威结算。",
-    sessionToken,
-  );
 }
 
 async function ensureLocalFile(params: {
@@ -206,6 +192,18 @@ export async function recoverStuckLipsyncTask(
   taskId: string,
   sessionToken?: string,
 ): Promise<TaskItem> {
+  return withTaskExecution(taskId, async () => {
+    try {
+      return await recoverTask(taskId, sessionToken);
+    } catch (error) {
+      TaskStore.update(taskId, { status: "failed", step: "error", failedStep: "finalize",
+        error: "成片恢复未完成，请稍后重试" });
+      throw error;
+    }
+  });
+}
+
+async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskItem> {
   const task = (await TaskStore.getAsync(taskId)) || TaskStore.get(taskId);
   if (!task) {
     throw new Error("任务不存在");
@@ -229,93 +227,15 @@ export async function recoverStuckLipsyncTask(
     });
   }
 
-  const fromCos = await completeFromCosFiles(TaskStore.get(taskId) || task, sessionToken);
-  if (fromCos) return fromCos;
-
   const provider = taskLipsyncProvider(task);
-  const jobId = extractPixverseJobId(task);
-  const savedUrl = savedResultUrl(task);
-  if (!jobId && !savedUrl) {
-    throw new Error("没有找到已扣费的对口型任务 ID，无法免费恢复");
-  }
-
-  TaskStore.addLog(taskId, "正在恢复已提交的对口型成片...", "info");
-  TaskStore.update(taskId, {
-    status: "processing",
-    step: "finalize",
-    progress: 85,
-    error: undefined,
-  });
-
-  let resultUrl = savedUrl;
-  let creditsUsed = task.results?.lipsyncCredits;
-  if (jobId) {
-    if (provider === "veed") {
-      const remote = await FalVeedLipsyncAdapter.fetchResult(jobId);
-      if (remote.status !== "COMPLETED" || !remote.url) {
-        throw new Error(`对口型结果还不能下载（status=${remote.status}）`);
-      }
-      resultUrl = remote.url;
-      TaskStore.update(taskId, {
-        results: {
-          heygenLipsyncId: jobId,
-          lipsyncProvider: "veed",
-          veedResultUrl: resultUrl,
-        },
-      });
-    } else if (provider === "pixverse") {
-      const remote = await OpenLuxLipsyncAdapter.fetchResult(jobId);
-      if (remote.status !== 1 || !remote.url) {
-        throw new Error(`对口型结果还不能下载（status=${remote.status}）`);
-      }
-      resultUrl = remote.url;
-      creditsUsed = remote.creditsUsed || creditsUsed;
-      TaskStore.update(taskId, {
-        results: {
-          heygenLipsyncId: jobId,
-          lipsyncProvider: "pixverse",
-          lipsyncCredits: creditsUsed,
-          pixverseResultUrl: resultUrl,
-        },
-      });
-    } else if (!savedUrl) {
-      throw new Error("高精度对口型任务尚未保存可下载的成片地址，请稍后重试");
-    }
-  }
-
-  if (!resultUrl) {
-    throw new Error("对口型已完成但没有成片地址");
-  }
-
   const jobDir = path.join(getAppConfig().storageDir, taskId);
   fs.mkdirSync(jobDir, { recursive: true });
   const rawPath = path.join(jobDir, "rendered-source.mp4");
   const audioPath = path.join(jobDir, "voice-track.wav");
   const finalPath = path.join(jobDir, "final.mp4");
+  const log = (msg: string) => TaskStore.addLog(taskId, msg, "info", "正在恢复成片，请稍候");
 
-  const log = (msg: string) => TaskStore.addLog(taskId, msg, "info");
-  const providerLabel = provider === "veed" ? "VEED" : provider === "heygen" ? "HeyGen" : "PixVerse";
-  log(`[${providerLabel}] 正在重新下载已渲染成片...`);
-  const downloaded =
-    provider === "veed" || provider === "heygen"
-      ? await downloadFileToDisk({
-          url: resultUrl,
-          outputPath: rawPath,
-          onProgress: (msg) => log(`[${providerLabel}] ${msg}`),
-          urlPolicy: providerUrlPolicy(provider === "veed" ? "fal" : "heygen"),
-        })
-      : await downloadPixverseResult({
-          url: resultUrl,
-          outputPath: rawPath,
-          onLog: log,
-        });
-  const viaRelay = "viaRelay" in downloaded ? downloaded.viaRelay : false;
-  log(
-    `[${providerLabel}] 成片已下载 (${(downloaded.bytes / 1024 / 1024).toFixed(2)} MB${
-      viaRelay ? "，经广州中转" : ""
-    })`
-  );
-
+  TaskStore.update(taskId, { status: "processing", step: "finalize", progress: 85, error: undefined });
   await ensureLocalFile({
     localPath: audioPath,
     cosKey: `jobs/${taskId}/voice-track.wav`,
@@ -323,9 +243,77 @@ export async function recoverStuckLipsyncTask(
     label: "原声音轨",
     onLog: log,
   });
+  const audioProbe = await probeMedia(audioPath);
+  const plan = provider === "heygen"
+    ? [{ index: 0, durationSeconds: audioProbe.durationSeconds }]
+    : planLipsyncChunks(audioProbe.durationSeconds);
+  const chunks = savedChunks(task);
+  // Even a cloud final must be probed; container metadata or a missing report
+  // must never stand in for the duration of the actual picture and narration.
+  let rawReady = false;
+  if (fs.existsSync(rawPath)) {
+    try { await verifyVideoDuration(rawPath, audioProbe.durationSeconds); rawReady = true; } catch {}
+  }
+  if (!rawReady && CosService.isConfigured() && await CosService.objectExists(`jobs/${taskId}/final.mp4`)) {
+    const url = await CosService.getDownloadUrl(`jobs/${taskId}/final.mp4`, "final.mp4");
+    await downloadTrustedMediaToFile({ source: url, outputPath: rawPath });
+    try { await verifyVideoDuration(rawPath, audioProbe.durationSeconds); rawReady = true; } catch {}
+  }
+  const rendered: string[] = [];
+  let creditsUsed = task.results.lipsyncCredits;
+
+  for (const part of rawReady ? [] : plan) {
+    const saved = chunks.find(chunk => chunk.index === part.index);
+    const outputName = plan.length === 1 ? "rendered-source.mp4" : `lipsync-chunks/result-${part.index}.mp4`;
+    const outputPath = path.join(jobDir, outputName);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    let ready = false;
+    if (fs.existsSync(outputPath)) {
+      try { await verifyVideoDuration(outputPath, part.durationSeconds); ready = true; } catch {}
+    }
+    if (!ready && CosService.isConfigured() && await CosService.objectExists(`jobs/${taskId}/${outputName}`)) {
+      const url = await CosService.getDownloadUrl(`jobs/${taskId}/${outputName}`, path.basename(outputPath));
+      await downloadTrustedMediaToFile({ source: url, outputPath });
+      await verifyVideoDuration(outputPath, part.durationSeconds);
+      ready = true;
+    }
+    let resultUrl = saved?.resultUrl;
+    if (!ready) {
+      if (saved?.lipsyncId && provider === "veed") {
+        const remote = await FalVeedLipsyncAdapter.fetchResult(saved.lipsyncId);
+        if (remote.status !== "COMPLETED" || !remote.url) throw new Error("分段结果尚未完成，请稍后恢复");
+        resultUrl = remote.url;
+      } else if (saved?.lipsyncId && provider === "pixverse") {
+        const remote = await OpenLuxLipsyncAdapter.fetchResult(saved.lipsyncId);
+        if (remote.status !== 1 || !remote.url) throw new Error("分段结果尚未完成，请稍后恢复");
+        resultUrl = remote.url;
+        if (plan.length === 1) creditsUsed = remote.creditsUsed || creditsUsed;
+      }
+      if (!resultUrl) throw new Error("缺少已提交的分段结果，无法恢复完整成片");
+      log(`正在取回第 ${part.index + 1}/${plan.length} 段成片...`);
+      if (provider === "pixverse") {
+        await downloadPixverseResult({ url: resultUrl, outputPath, onLog: log });
+      } else {
+        await downloadFileToDisk({ url: resultUrl, outputPath, onProgress: log,
+          urlPolicy: providerUrlPolicy(provider === "veed" ? "fal" : "heygen") });
+      }
+      await verifyVideoDuration(outputPath, part.durationSeconds);
+    }
+    rendered.push(outputPath);
+    const completedChunk: SavedChunk = { ...saved, index: part.index, resultUrl, outputName, status: "downloaded" };
+    const currentChunks = [...(TaskStore.get(taskId)?.results.lipsyncChunks || chunks)];
+    const existing = currentChunks.findIndex(chunk => chunk.index === part.index);
+    if (existing >= 0) currentChunks[existing] = completedChunk;
+    else currentChunks.push(completedChunk);
+    TaskStore.update(taskId, { results: { lipsyncChunks: currentChunks } });
+  }
+  if (!rawReady && plan.length > 1) await concatVideos(rendered, rawPath);
+  await verifyVideoDuration(rawPath, audioProbe.durationSeconds);
+  const jobId = chunks.map(chunk => chunk.lipsyncId).filter(Boolean).join(",");
 
   log("正在将成片与原声音轨混流封装...");
   const finalProbe = await finalizeVideo(rawPath, audioPath, finalPath);
+  await verifyVideoDuration(finalPath, audioProbe.durationSeconds);
   const sha256Video = await sha256File(finalPath);
   const sha256Audio = await sha256File(audioPath);
 
@@ -371,9 +359,9 @@ export async function recoverStuckLipsyncTask(
       heygenLipsyncId: jobId || task.results.heygenLipsyncId,
       lipsyncProvider: provider,
       lipsyncCredits: creditsUsed,
-      pixverseResultUrl: provider === "pixverse" ? resultUrl : task.results.pixverseResultUrl,
-      veedResultUrl: provider === "veed" ? resultUrl : task.results.veedResultUrl,
-      heygenResultUrl: provider === "heygen" ? resultUrl : task.results.heygenResultUrl,
+      pixverseResultUrl: task.results.pixverseResultUrl,
+      veedResultUrl: task.results.veedResultUrl,
+      heygenResultUrl: task.results.heygenResultUrl,
       videoDuration: finalProbe.durationSeconds,
       audioDuration: (await probeMedia(audioPath)).durationSeconds,
       resolution: `${finalProbe.width}x${finalProbe.height}`,

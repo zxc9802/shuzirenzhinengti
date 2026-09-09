@@ -2,6 +2,7 @@ import { logServerError } from "../server/safe-log";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { withTaskExecution } from "./task-execution";
 import { TaskStore, TaskItem, TaskStep } from "../store/task-store";
 import { getAppConfig } from "../config";
 import { generateIndexTTS } from "./indextts";
@@ -34,6 +35,10 @@ export async function runDigitalHumanPipeline(
   taskId: string,
   sessionToken?: string,
 ): Promise<void> {
+  return withTaskExecution(taskId, () => runPipeline(taskId, sessionToken));
+}
+
+async function runPipeline(taskId: string, sessionToken?: string): Promise<void> {
   const task = TaskStore.get(taskId);
   if (!task) return;
 
@@ -77,6 +82,14 @@ export async function runDigitalHumanPipeline(
         billing: { ...current.billing, status: "provider_committed" },
       });
     }
+  };
+  const recordChunk = (chunk: NonNullable<TaskItem["results"]["lipsyncChunks"]>[number]) => {
+    const chunks = [...(TaskStore.get(taskId)?.results.lipsyncChunks || [])];
+    const index = chunks.findIndex(item => item.index === chunk.index);
+    if (index >= 0) chunks[index] = { ...chunks[index], ...chunk };
+    else chunks.push(chunk);
+    chunks.sort((a, b) => a.index - b.index);
+    TaskStore.update(taskId, { results: { lipsyncChunks: chunks } });
   };
 
   let currentStep: TaskStep = "tts";
@@ -318,15 +331,7 @@ export async function runDigitalHumanPipeline(
               },
             });
           },
-          onChunkProgress: (chunk) => {
-            const current = TaskStore.get(taskId);
-            const chunks = [...(current?.results.lipsyncChunks || [])];
-            const index = chunks.findIndex((item) => item.index === chunk.index);
-            if (index >= 0) chunks[index] = { ...chunks[index], ...chunk };
-            else chunks.push(chunk);
-            chunks.sort((a, b) => a.index - b.index);
-            TaskStore.update(taskId, { results: { lipsyncChunks: chunks } });
-          },
+          onChunkProgress: recordChunk,
         },
         jobDir
       );
@@ -352,6 +357,7 @@ export async function runDigitalHumanPipeline(
           audioUrl: publicAudioUrl,
           objectKeyPrefix: `jobs/${taskId}`,
           onLog: logProvider,
+          onChunkProgress: recordChunk,
           onProviderAccepted: markProviderCommitted,
           onJobCreated: ({ lipsyncId }) => {
             markProviderCommitted();

@@ -95,6 +95,7 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
         }
       : undefined,
     inputs: {
+      avatarId: task.inputs.avatarId,
       videoName: sanitizePublicText(task.inputs.videoName, "口播素材.mp4"),
       scriptText: task.inputs.scriptText,
       toneProfile: task.inputs.toneProfile,

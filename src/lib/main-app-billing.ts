@@ -306,7 +306,10 @@ export async function settleMainAppCredits(input: {
   actualDuration: number;
   pointsBalance?: number;
 }> {
-  const actualDuration = Math.max(0.1, Number(input.actualDuration) || 0);
+  const actualDuration = Number(input.actualDuration);
+  if (!Number.isFinite(actualDuration) || actualDuration <= 0) {
+    throw new MainAppBillingError("成片时长无效，暂时不能结算", 400, "BILLING_DURATION_INVALID");
+  }
   const chargedPoints =
     input.chargedPoints ?? calculateRequiredPoints(actualDuration);
   const costCny = calculateCostCny(actualDuration);

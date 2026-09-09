@@ -173,10 +173,11 @@ test("toPublicTask exposes no provider, model, raw URL, local path or billing in
     "creditsBefore",
     "creditsAfter",
     "userAccount",
-    "avatarId",
   ]) {
     assert.ok(!serialized.includes(`"${forbiddenKey}"`), `公开 DTO 不得包含字段 ${forbiddenKey}`);
   }
+  // The library already exposes this app-owned ID; restoring a task needs it.
+  assert.equal(publicTask.inputs.avatarId, makeTask().inputs.avatarId);
 });
 
 test("toPublicTask maps private providers to neutral engine codes and steps to neutral names", () => {

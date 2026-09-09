@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TaskStore } from "@/lib/store/task-store";
+import { TaskBusyError } from "@/lib/engine/task-execution";
 import { isTaskOutputDeliverable, toPublicTask } from "@/lib/server/public-data";
 import {
   isRecoverableLipsyncTask,
@@ -42,6 +43,9 @@ export async function POST(
     const recovered = await recoverStuckLipsyncTask(id, access.session?.token);
     return NextResponse.json({ success: true, task: toPublicTask(recovered) });
   } catch (err: any) {
+    if (err instanceof TaskBusyError) {
+      return NextResponse.json({ error: "任务正在处理中，请稍后重试" }, { status: 409 });
+    }
     return NextResponse.json(
       { error: "恢复失败，请稍后重试" },
       { status: 500 }

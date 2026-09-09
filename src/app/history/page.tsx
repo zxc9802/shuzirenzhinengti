@@ -35,6 +35,10 @@ export default function HistoryPage() {
     try {
       const resp = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
       const data = await resp.json();
+      if (!resp.ok) {
+        alert(data.error || "删除失败，请稍后重试");
+        return;
+      }
       if (data.success) {
         setTasks((prev) => prev.filter((t) => t.id !== id));
       }

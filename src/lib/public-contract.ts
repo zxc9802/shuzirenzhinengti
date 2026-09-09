@@ -44,6 +44,7 @@ export interface PublicTaskItem {
   logs: PublicLogEntry[];
   billing?: PublicTaskBilling;
   inputs: {
+    avatarId?: string;
     videoName: string;
     scriptText: string;
     toneProfile: "low" | "high";

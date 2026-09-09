@@ -11,6 +11,7 @@ import {
   validateOutboundUrl,
 } from "../server/outbound-url-policy";
 import { LIPSYNC_CHUNK_SECONDS, planLipsyncChunks, pollTimeoutMs } from "./lipsync-chunks";
+import type { TaskItem } from "../store/task-store";
 
 export interface FalVeedJobProgress {
   lipsyncId: string;
@@ -27,6 +28,7 @@ export interface FalVeedLipsyncOptions {
   onProviderAccepted?: () => void;
   onJobCreated?: (info: FalVeedJobProgress) => void;
   onResultReady?: (info: FalVeedJobProgress) => void;
+  onChunkProgress?: (chunk: NonNullable<TaskItem["results"]["lipsyncChunks"]>[number]) => void;
 }
 
 export interface FalVeedLipsyncResult {
@@ -491,13 +493,22 @@ export class FalVeedLipsyncAdapter {
           durationSeconds: chunk.durationSeconds,
           outputPath: chunkOut,
           onLog,
-          onJobCreated: options.onJobCreated,
-          onResultReady: options.onResultReady,
+          onProviderAccepted: options.onProviderAccepted,
+          onJobCreated: info => {
+            options.onJobCreated?.(info);
+            options.onChunkProgress?.({ index: chunk.index, lipsyncId: info.lipsyncId, status: "created" });
+          },
+          onResultReady: info => {
+            options.onResultReady?.(info);
+            options.onChunkProgress?.({ index: chunk.index, lipsyncId: info.lipsyncId, resultUrl: info.downloadUrl, status: "ready" });
+          },
         },
         ctx
       );
       rendered.push(chunkOut);
       jobIds.push(result.lipsyncId);
+      options.onChunkProgress?.({ index: chunk.index, lipsyncId: result.lipsyncId,
+        outputName: `lipsync-chunks/result-${chunk.index}.mp4`, status: "downloaded" });
     }
 
     onLog(`[VEED] ${chunks.length} 段已完成，正在拼接成完整画面...`);

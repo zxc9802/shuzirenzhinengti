@@ -9,6 +9,7 @@ import ts from "typescript";
 import * as billing from "../src/lib/main-app-billing.ts";
 import * as media from "../src/lib/engine/ffmpeg.ts";
 import * as safeLog from "../src/lib/server/safe-log.ts";
+import * as taskExecution from "../src/lib/engine/task-execution.ts";
 import { isTaskOutputDeliverable } from "../src/lib/server/public-data.ts";
 
 const source = fs.readFileSync(new URL("../src/lib/engine/pipeline.ts", import.meta.url), "utf8");
@@ -57,7 +58,7 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         addLog: (_id, message, level, publicMessage) => task.logs.push({message, level, publicMessage}),
         update: (_id, update) => {task = {...task, ...update, results: {...task.results, ...update.results}}; return task;}};
       const deps = {
-        path, fs, crypto, "../server/safe-log": safeLog,
+        path, fs, crypto, "../server/safe-log": safeLog, "./task-execution": taskExecution,
         "../store/task-store": {TaskStore},
         "../config": {getAppConfig: () => ({storageDir: path.join(tmp, "jobs"), publicBaseUrl: "https://media.example.test", indexttsSpeakerAudioUrl: speaker})},
         "./indextts": {generateIndexTTS: async (_text, options) => {

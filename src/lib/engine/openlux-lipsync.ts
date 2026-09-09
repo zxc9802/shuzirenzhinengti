@@ -433,6 +433,7 @@ export class OpenLuxLipsyncAdapter {
           outputPath: chunkOut,
           resumeJobId: savedChunk?.lipsyncId,
           onLog,
+          onProviderAccepted: options.onProviderAccepted,
           onJobCreated: (info) => {
             options.onJobCreated?.(info);
             options.onChunkProgress?.({

@@ -6,6 +6,7 @@ import crypto from "crypto";
 
 export interface MediaProbeInfo {
   durationSeconds: number;
+  videoDurationSeconds?: number;
   width?: number;
   height?: number;
   displayAspectRatio?: string;
@@ -110,7 +111,7 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
     "-v",
     "error",
     "-show_entries",
-    "format=duration,size,bit_rate:stream=index,codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels:stream_tags=rotate:stream_side_data=rotation",
+    "format=duration,size,bit_rate:stream=index,codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels,duration:stream_tags=rotate:stream_side_data=rotation",
     "-of",
     "json",
     filePath,
@@ -133,12 +134,15 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
   let audioChannels: number | undefined;
   let sampleRate: number | undefined;
   let rotation: number | undefined;
+  let videoDurationSeconds: number | undefined;
 
   for (const stream of data.streams || []) {
     if (stream.codec_type === "video" && width === undefined) {
       width = parseInt(stream.width, 10);
       height = parseInt(stream.height, 10);
       videoCodec = stream.codec_name;
+      const streamDuration = Number(stream.duration);
+      if (Number.isFinite(streamDuration) && streamDuration > 0) videoDurationSeconds = streamDuration;
       if (stream.r_frame_rate) {
         const [num, den] = stream.r_frame_rate.split("/").map(Number);
         if (num && den) fps = Math.round((num / den) * 100) / 100;
@@ -161,6 +165,7 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
 
   return {
     durationSeconds,
+    videoDurationSeconds,
     width,
     height,
     fps,

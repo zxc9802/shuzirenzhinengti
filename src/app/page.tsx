@@ -148,12 +148,13 @@ export default function StudioPage() {
             setEmotionIntensity(taskToLoad.inputs.emotionIntensity ?? 0.8);
             if (taskToLoad.inputs.engine) setEngine(taskToLoad.inputs.engine);
           if (taskToLoad.results.originalVideoUrl) {
-            setVideoData({
-              avatarId: "",
+            const restoredVideo = taskToLoad.inputs.avatarId ? {
+              avatarId: taskToLoad.inputs.avatarId,
               name: taskToLoad.inputs.videoName || "口播素材.mp4",
               previewUrl: taskToLoad.results.originalVideoUrl,
               probe: null,
-            });
+            } : null;
+            setVideoData(selected => selected?.avatarId ? selected : restoredVideo);
           }
         }
       }
@@ -202,7 +203,7 @@ export default function StudioPage() {
   }, [currentTask?.id, currentTask?.status]);
 
   const handleStartPipeline = async () => {
-    if (!videoData) {
+    if (!videoData?.avatarId) {
       setError("请先上传口播视频");
       return;
     }
@@ -586,7 +587,7 @@ export default function StudioPage() {
             return (
               <button
                 onClick={handleStartPipeline}
-                disabled={loading || isRunning || !videoData || !scriptText.trim()}
+                disabled={loading || isRunning || !videoData?.avatarId || !scriptText.trim()}
                 className="w-full flex items-center justify-center gap-2 rounded-2xl bg-blue-600 hover:bg-blue-500 p-4 text-sm font-bold text-white shadow-lg shadow-blue-600/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-[0.99] border border-blue-400/30"
               >
                 <Play className="h-4 w-4 fill-white" />

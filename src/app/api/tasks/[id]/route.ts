@@ -69,6 +69,16 @@ export async function DELETE(
     return taskNotFoundResponse();
   }
 
+  if (
+    task.status === "pending" || task.status === "processing" ||
+    (task.billing?.isExternalUser && !["settled", "released"].includes(task.billing.status))
+  ) {
+    return NextResponse.json(
+      { error: "任务仍在处理或计费尚未确认，暂时不能删除，请完成或恢复后再试" },
+      { status: 409 }
+    );
+  }
+
   const deleted = TaskStore.delete(id);
   const localJobDir = path.join(getAppConfig().storageDir, id);
   fs.rmSync(localJobDir, { recursive: true, force: true });
