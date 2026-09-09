@@ -26,6 +26,7 @@ import {
 import type { PublicAvatarItem } from "@/lib/public-contract";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
 import { uploadMediaFile } from "@/lib/client-media-upload";
+import { inspectVideoFile, recoverAvatarCover, type VideoInspection } from "@/lib/client-video-preview";
 
 // Sub-component for individual avatar card item with resilient cover display and hover preview
 function AvatarCardItem({
@@ -264,11 +265,12 @@ export default function AvatarsPage() {
   // Upload modal states
   const [uploadName, setUploadName] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [clientThumbBlob, setClientThumbBlob] = useState<Blob | null>(null);
+  const inspectionRef = useRef<{ file: File; result: Promise<VideoInspection> } | null>(null);
   const [clientThumbPreview, setClientThumbPreview] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadWarning, setUploadWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAvatars = async () => {
@@ -289,49 +291,19 @@ export default function AvatarsPage() {
     fetchAvatars();
   }, []);
 
-  // Capture video frame via browser canvas at 1.0s
+  // Start inspection on selection and await the same result before saving.
   const extractClientThumbnail = (file: File) => {
-    try {
-      const video = document.createElement("video");
-      const url = URL.createObjectURL(file);
-      video.src = url;
-      video.muted = true;
-      video.playsInline = true;
-      video.currentTime = 1.0;
-
-      video.onloadeddata = () => {
-        video.currentTime = Math.min(1.0, (video.duration || 2) * 0.2);
+    setClientThumbPreview(null);
+    const result = inspectVideoFile(file);
+    inspectionRef.current = { file, result };
+    result.then(info => {
+      if (!info.thumbnail || inspectionRef.current?.file !== file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (inspectionRef.current?.file === file) setClientThumbPreview(String(reader.result));
       };
-
-      video.onseeked = () => {
-        try {
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 720;
-          canvas.height = video.videoHeight || 1280;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-            setClientThumbPreview(dataUrl);
-            canvas.toBlob(
-              (blob) => {
-                if (blob) setClientThumbBlob(blob);
-              },
-              "image/jpeg",
-              0.9
-            );
-          }
-        } catch (e) {
-          console.warn("Client frame capture error:", e);
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      };
-
-      video.onerror = () => {
-        URL.revokeObjectURL(url);
-      };
-    } catch {}
+      reader.readAsDataURL(info.thumbnail);
+    });
   };
 
   const handleSelectFile = (file: File) => {
@@ -358,8 +330,12 @@ export default function AvatarsPage() {
     setUploading(true);
     setUploadProgress(0);
     setUploadError(null);
+    setUploadWarning(null);
 
     try {
+      const inspection = await (inspectionRef.current?.file === uploadFile
+        ? inspectionRef.current.result : inspectVideoFile(uploadFile));
+      const clientThumbBlob = inspection.thumbnail;
       // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
       const videoResult = await uploadMediaFile(
         uploadFile,
@@ -394,9 +370,9 @@ export default function AvatarsPage() {
           name: displayName,
           uploadKey: videoResult.uploadKey,
           coverKey,
-          durationSeconds: 0,
-          width: 1080,
-          height: 1920,
+          durationSeconds: inspection.durationSeconds,
+          width: inspection.width,
+          height: inspection.height,
           fps: 30,
           fileSize: uploadFile.size,
         }),
@@ -406,6 +382,10 @@ export default function AvatarsPage() {
       if (!res.success) throw new Error(res.error || "添加形象失败");
 
       if (res.avatar) {
+        if (!res.avatar.coverUrl) {
+          res.avatar.coverUrl = await recoverAvatarCover(res.avatar.id);
+          if (!res.avatar.coverUrl) setUploadWarning("视频已保存，封面暂未生成，可在形象卡片上点击重新提取封面");
+        }
         setAvatars((prev) => [res.avatar, ...prev]);
       } else {
         await fetchAvatars();
@@ -414,7 +394,7 @@ export default function AvatarsPage() {
       setIsUploadModalOpen(false);
       setUploadFile(null);
       setUploadName("");
-      setClientThumbBlob(null);
+      inspectionRef.current = null;
       setClientThumbPreview(null);
     } catch (err: any) {
       setUploadError(err.message || "上传失败");
@@ -489,6 +469,7 @@ export default function AvatarsPage() {
       </div>
 
       {/* Grid */}
+      {uploadWarning && <p role="status" className="mb-4 text-sm text-amber-300">{uploadWarning}</p>}
       {loading ? (
         <div className="flex items-center justify-center py-20 text-zinc-400 text-xs gap-2">
           <RefreshCw className="h-5 w-5 animate-spin text-blue-400" />

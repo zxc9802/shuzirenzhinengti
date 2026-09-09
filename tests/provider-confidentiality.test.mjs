@@ -83,14 +83,6 @@ test("browser management surfaces and direct public storage are closed", async (
   }
 });
 
-test("browser uploads stay on the application origin and expose no storage signature or object key", async () => {
-  const clientUpload = await read("src/lib/client-media-upload.ts");
-  assert.match(clientUpload, /\/api\/upload/);
-  assert.doesNotMatch(clientUpload, /presign|presignedUrl|myqcloud|cos/i);
-  const presignRoute = await read("src/app/api/cos/presign/route.ts");
-  assert.match(presignRoute, /status: 404/);
-});
-
 test("task deletion creates a tombstone and cleans the entire task prefix", async () => {
   const store = await read("src/lib/store/task-store.ts");
   const route = await read("src/app/api/tasks/[id]/route.ts");

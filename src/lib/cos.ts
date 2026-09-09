@@ -9,6 +9,7 @@ let currentSecretId = "";
 let currentSecretKey = "";
 let storagePolicyPromise: Promise<void> | null = null;
 let storagePolicyIdentity = "";
+const DIRECT_PART_BYTES = 8 * 1024 * 1024;
 
 function isManagedMediaKey(key: string): boolean {
   return (
@@ -40,6 +41,60 @@ function getCosClient(): COS | null {
 }
 
 export const CosService = {
+  async createDirectUpload(key: string, bytes: number, contentType: string) {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos || !config.cosBucket || !config.cosRegion) throw new Error("云端存储未配置");
+    await this.ensureBucketPrivateAndCors();
+    const target = { Bucket: config.cosBucket, Region: config.cosRegion, Key: key };
+    const { UploadId } = await cos.multipartInit({ ...target, ContentType: contentType, ACL: "private" });
+    try {
+      const parts = await Promise.all(Array.from({ length: Math.ceil(bytes / DIRECT_PART_BYTES) }, async (_, index) => {
+        const size = Math.min(DIRECT_PART_BYTES, bytes - index * DIRECT_PART_BYTES);
+        const url = await new Promise<string>((resolve, reject) => {
+          cos.getObjectUrl({
+            ...target, Method: "PUT", Sign: true, Protocol: "https:", Expires: 3600,
+            Query: { uploadId: UploadId, partNumber: String(index + 1) },
+            Headers: { "Content-Length": String(size), "Content-Type": "application/octet-stream" },
+          }, (err, data) => err || !data?.Url ? reject(new Error("无法生成上传授权")) : resolve(data.Url));
+        });
+        return { url, size };
+      }));
+      return { uploadId: UploadId, parts };
+    } catch (error) {
+      await this.abortDirectUpload(key, UploadId).catch(() => undefined);
+      throw error;
+    }
+  },
+
+  async abortDirectUpload(key: string, uploadId: string): Promise<void> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos) return;
+    await cos.multipartAbort({ Bucket: config.cosBucket, Region: config.cosRegion, Key: key, UploadId: uploadId });
+  },
+
+  async completeDirectUpload(key: string, uploadId: string, bytes: number): Promise<boolean> {
+    const config = getAppConfig();
+    const cos = getCosClient();
+    if (!cos) throw new Error("云端存储未配置");
+    // Completion may have succeeded even when its response was lost.
+    if (await this.getObjectSize(key) === bytes) return true;
+    const target = { Bucket: config.cosBucket, Region: config.cosRegion, Key: key, UploadId: uploadId };
+    try {
+      const listed = await cos.multipartListPart({ ...target, MaxParts: 100 });
+      const parts = [...(listed.Part || [])].sort((a, b) => Number(a.PartNumber) - Number(b.PartNumber));
+      if (String(listed.IsTruncated) === "true" || parts.length !== Math.ceil(bytes / DIRECT_PART_BYTES) ||
+          parts.some((part, index) => Number(part.PartNumber) !== index + 1 || !part.ETag ||
+            Number(part.Size) !== Math.min(DIRECT_PART_BYTES, bytes - index * DIRECT_PART_BYTES))) return false;
+      await cos.multipartComplete({ ...target, Parts: parts.map(part => ({ PartNumber: part.PartNumber, ETag: part.ETag })) });
+    } catch (error) {
+      if (await this.getObjectSize(key) === bytes) return true;
+      throw error;
+    }
+    return await this.getObjectSize(key) === bytes;
+  },
+
   isConfigured(): boolean {
     const config = getAppConfig();
     return Boolean(

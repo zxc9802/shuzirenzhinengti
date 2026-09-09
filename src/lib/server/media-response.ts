@@ -252,18 +252,14 @@ export async function servePrivateMedia(
   }
 
   let streamedBytes = 0;
-  const limiter = new Transform({
-    transform(chunk, _encoding, callback) {
-      streamedBytes += chunk.length;
-      callback(
-        streamedBytes > MAX_REMOTE_MEDIA_BYTES ? new Error("Media exceeds size limit") : null,
-        chunk
-      );
+  // Keep errors and cancellation connected to the upstream body during playback.
+  const body = upstream.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      streamedBytes += chunk.byteLength;
+      if (streamedBytes > MAX_REMOTE_MEDIA_BYTES) throw new Error("Media exceeds size limit");
+      controller.enqueue(chunk);
     },
-  });
-  const body = Readable.toWeb(
-    Readable.fromWeb(upstream.body as never).pipe(limiter)
-  ) as ReadableStream;
+  }));
 
   const headers = new Headers({
     "Content-Type": options.contentType || upstream.headers.get("content-type") || "application/octet-stream",

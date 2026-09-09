@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       ? avatar.videoPath
       : await getTrustedExternalMediaUrl(storedVideoSrc);
 
-    const ownerKey = ownerKeyFor(avatar.userId || access.userId || "legacy");
+    const ownerKey = ownerKeyFor(avatar.userId);
     const thumbFileName = `${crypto.randomUUID()}.jpg`;
     const cosThumbKey = `uploads/users/${ownerKey}/thumbnails/${thumbFileName}`;
     thumbPath = localUploadPath(cosThumbKey);

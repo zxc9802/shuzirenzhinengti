@@ -304,3 +304,46 @@ test("downloadTrustedMediaToFile copies only allowed local files and enforces th
     /size limit/
   );
 });
+
+
+test("remote preview propagates an upstream timeout without an uncaught server exception", {timeout:2000}, async () => {
+  let upstream;
+  stubFetch([new Response(new ReadableStream({start(controller) {upstream = controller;}}))]);
+  const response = await media.servePrivateMedia(fakeRequest(), REFERENCE_URL, {allowConfiguredReference:true});
+  const reading = response.arrayBuffer();
+  const rejected = assert.rejects(reading, /preview timeout/);
+  upstream.error(new DOMException("preview timeout", "TimeoutError"));
+  await rejected;
+});
+
+test("cancelling a video preview also cancels its upstream body", async () => {
+  let cancelled = false;
+  stubFetch([new Response(new ReadableStream({cancel() {cancelled = true;}}))]);
+  const response = await media.servePrivateMedia(fakeRequest(), REFERENCE_URL, {allowConfiguredReference:true});
+  await response.body.cancel();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cancelled, true);
+});
+
+
+test("preview still enforces the byte limit when upstream omits Content-Length", async () => {
+  let cancelled = false;
+  const chunk = new Uint8Array(1024 * 1024);
+  stubFetch([new Response(new ReadableStream({
+    pull(controller) {controller.enqueue(chunk);},
+    cancel() {cancelled = true;},
+  }))]);
+  const response = await media.servePrivateMedia(fakeRequest(), REFERENCE_URL, {allowConfiguredReference:true});
+  const reader = response.body.getReader();
+  let bytes = 0;
+  await assert.rejects(async () => {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+    }
+  }, /size limit/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bytes, media.MAX_REMOTE_MEDIA_BYTES);
+  assert.equal(cancelled, true);
+});

@@ -51,6 +51,7 @@ type PendingUpload = {
   createdAt: number;
   expiresAt: number;
   stored: boolean;
+  multipartUploadId?: string;
 };
 
 type PendingDeletion = {
@@ -182,8 +183,27 @@ export function markPendingUploadStored(key: string): boolean {
   return withPendingUploadLock(() => {
     const records = loadPendingUploads();
     const record = records.find((item) => item.key === key);
-    if (!record) return false;
+    if (!record || record.expiresAt <= Date.now()) return false;
     record.stored = true;
+    savePendingUploads(records);
+    return true;
+  });
+}
+
+export function getPendingUpload(key: string, userId: string | null | undefined): PendingUpload | null {
+  return withPendingUploadLock(() => {
+    const record = loadPendingUploads().find(item => item.key === key);
+    return record && record.ownerKey === ownerKeyFor(userId) && record.expiresAt > Date.now()
+      ? { ...record } : null;
+  });
+}
+
+export function setPendingMultipartUpload(key: string, uploadId: string): boolean {
+  return withPendingUploadLock(() => {
+    const records = loadPendingUploads();
+    const record = records.find(item => item.key === key);
+    if (!record || record.expiresAt <= Date.now()) return false;
+    record.multipartUploadId = uploadId;
     savePendingUploads(records);
     return true;
   });
@@ -245,6 +265,9 @@ export async function cleanupExpiredPendingUploads(now = Date.now()): Promise<nu
   });
   if (expired.length === 0) return 0;
   await Promise.all(expired.map(async (record) => {
+    if (record.multipartUploadId) {
+      try { await CosService.abortDirectUpload(record.key, record.multipartUploadId); } catch {}
+    }
     try { await CosService.deleteObject(record.key); } catch {}
     try {
       const candidate = localUploadPath(record.key);

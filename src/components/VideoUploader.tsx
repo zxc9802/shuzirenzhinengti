@@ -18,6 +18,7 @@ import { formatBytes, formatDuration } from "@/lib/utils";
 import AvatarLibrary from "./AvatarLibrary";
 import type { PublicAvatarItem, PublicVideoSelection } from "@/lib/public-contract";
 import { uploadMediaFile } from "@/lib/client-media-upload";
+import { inspectVideoFile, recoverAvatarCover } from "@/lib/client-video-preview";
 
 interface VideoUploaderProps {
   onVideoUploaded: (videoData: PublicVideoSelection) => void;
@@ -51,48 +52,12 @@ export default function VideoUploader({
     setUploadProgress(0);
     setUploadSpeedText("准备上传...");
 
-    // Fast local video probe and blob preview + canvas thumbnail capture
+    // Keep immediate playback local; upload and persisted playback use separate URLs.
     const localBlobUrl = URL.createObjectURL(file);
-    const tempVideo = document.createElement("video");
-    tempVideo.src = localBlobUrl;
-    tempVideo.muted = true;
-    tempVideo.playsInline = true;
-    tempVideo.preload = "auto";
-
-    let capturedThumbBlob: Blob | null = null;
-
-    const localProbePromise = new Promise<{ width: number; height: number; durationSeconds: number }>((resolve) => {
-      tempVideo.onloadedmetadata = () => {
-        const width = tempVideo.videoWidth || 1080;
-        const height = tempVideo.videoHeight || 1920;
-        const duration = tempVideo.duration || 0;
-        tempVideo.currentTime = Math.min(1.0, duration * 0.2);
-        resolve({ width, height, durationSeconds: duration });
-      };
-      tempVideo.onerror = () => {
-        resolve({ width: 1080, height: 1920, durationSeconds: 0 });
-      };
-    });
-
-    tempVideo.onseeked = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = tempVideo.videoWidth || 720;
-        canvas.height = tempVideo.videoHeight || 1280;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (blob) capturedThumbBlob = blob;
-          }, "image/jpeg", 0.9);
-        }
-      } catch {}
-    };
-
-    const localProbe = await localProbePromise;
 
     try {
-      // 1. Direct upload video to cloud object storage (bypasses server 413 limit)
+      const { thumbnail: capturedThumbBlob, ...localProbe } = await inspectVideoFile(file);
+      // 1. Upload to storage using bounded, authorized parts.
       const videoResult = await uploadMediaFile(
         file,
         file.name,
@@ -141,6 +106,11 @@ export default function VideoUploader({
 
       const res = await createResp.json();
       if (!res.success) throw new Error(res.error || "添加形象失败");
+      if (!res.avatar.coverUrl) {
+        setUploadSpeedText("视频已上传，正在生成封面...");
+        res.avatar.coverUrl = await recoverAvatarCover(res.avatar.id);
+        if (!res.avatar.coverUrl) setError("视频已保存，封面暂未生成，可在形象库点击重新提取封面");
+      }
 
       const finalData = {
         fileName: displayName,
@@ -166,6 +136,7 @@ export default function VideoUploader({
         probe: finalData.probe,
       });
     } catch (err: any) {
+      URL.revokeObjectURL(localBlobUrl);
       setError(err.message || "上传异常");
     } finally {
       setUploading(false);
@@ -271,6 +242,7 @@ export default function VideoUploader({
               onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   handleUpload(e.target.files[0]);
+                  e.target.value = "";
                 }
               }}
               disabled={disabled || uploading}
