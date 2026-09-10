@@ -40,6 +40,7 @@ mock.method(COS.prototype, "multipartListPart", async p => {
 mock.method(COS.prototype, "multipartComplete", async p => {
   const upload = uploads.get(p.Key);
   if (!upload || upload.complete) throw new Error("NoSuchUpload");
+  upload.completedParts = p.Parts;
   upload.complete = true;
   return {};
 });
@@ -118,8 +119,10 @@ test("direct upload requires all verified parts, then supports confirmation retr
   upload.parts.push({ PartNumber: "2", Size: 1, ETag: '"part-two"' });
   assert.equal((await complete(await finish())).status, 409);
   upload.parts[1].Size = 2 * 1024 * 1024;
+  upload.parts.reverse(); // Concurrent transfers can finish in a different order.
   const done = await complete(await finish());
   assert.equal(done.status, 200);
+  assert.deepEqual(upload.completedParts.map(part => part.PartNumber), ["1", "2"]);
   assert.equal((await done.json()).storedRemotely, true);
   assert.equal((await complete(await finish())).status, 200);
   const response = await createAvatar(await request({ name: "新形象", uploadKey: grant.uploadKey,

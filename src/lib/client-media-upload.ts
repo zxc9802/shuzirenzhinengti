@@ -8,11 +8,12 @@ class UploadError extends Error {
   constructor(message: string, status = 0) { super(message); this.status = status; }
 }
 
-async function retryUpload<T>(operation: () => Promise<T>): Promise<T> {
+async function retryUpload<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   for (let attempt = 0; ; attempt++) {
+    if (signal?.aborted) throw signal.reason;
     try { return await operation(); } catch (error) {
       const status = error instanceof UploadError ? error.status : 0;
-      if (attempt >= 2 || (status > 0 && status < 500 && status !== 408 && status !== 429)) throw error;
+      if (signal?.aborted || attempt >= 2 || (status > 0 && status < 500 && status !== 408 && status !== 429)) throw error;
       await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
     }
   }
@@ -37,29 +38,60 @@ export async function uploadMediaFile(
   const contentType = file.type || "application/octet-stream";
   const grant = await postUploadControl("/api/upload/direct", { folder, fileName, fileSize: file.size, contentType });
   if (grant.direct) {
+    const parts = grant.parts as { url: string; size: number }[];
+    const loaded = parts.map(() => 0);
+    const cancellation = new AbortController();
+    let nextPart = 0;
     let offset = 0;
     let highestProgress = 0;
-    for (const part of grant.parts as { url: string; size: number }[]) {
-      const slice = file.slice(offset, offset + part.size);
-      await retryUpload(() => new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", part.url, true);
-        xhr.setRequestHeader("Content-Type", "application/octet-stream");
-        // The browser supplies Content-Length from the Blob; it must match the signed part size.
-        xhr.timeout = 180_000;
-        xhr.upload.onprogress = event => {
-          if (!event.lengthComputable) return;
-          highestProgress = Math.max(highestProgress, Math.min(99, Math.round((offset + event.loaded) / file.size * 100)));
-          onProgress?.(highestProgress);
-        };
-        xhr.onload = () => xhr.status >= 200 && xhr.status < 300
-          ? resolve() : reject(new UploadError(`上传分段失败 (${xhr.status})`, xhr.status));
-        xhr.onerror = () => reject(new UploadError("云端上传连接失败，请检查网络后重试"));
-        xhr.ontimeout = () => reject(new UploadError("上传分段超时，请重试", 408));
-        xhr.send(slice);
-      }));
-      offset += part.size;
-    }
+    const reportProgress = (index: number, bytes: number) => {
+      if (cancellation.signal.aborted) return;
+      loaded[index] = Math.min(parts[index].size, bytes);
+      const total = loaded.reduce((sum, value) => sum + value, 0);
+      highestProgress = Math.max(highestProgress, Math.min(99, Math.round(total / file.size * 100)));
+      onProgress?.(highestProgress);
+    };
+    await Promise.all(Array.from({ length: Math.min(3, parts.length) }, async () => {
+      try {
+        while (!cancellation.signal.aborted && nextPart < parts.length) {
+          const index = nextPart++;
+          const part = parts[index];
+          const slice = file.slice(offset, offset + part.size);
+          offset += part.size;
+          await retryUpload(() => new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            const abort = () => xhr.abort();
+            const finish = (error?: unknown) => {
+              cancellation.signal.removeEventListener("abort", abort);
+              if (error) reject(error);
+              else resolve();
+            };
+            reportProgress(index, 0);
+            xhr.open("PUT", part.url, true);
+            xhr.setRequestHeader("Content-Type", "application/octet-stream");
+            // The browser supplies Content-Length from the Blob; it must match the signed part size.
+            xhr.timeout = 180_000;
+            xhr.upload.onprogress = event => {
+              if (event.lengthComputable) reportProgress(index, event.loaded);
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                reportProgress(index, part.size);
+                finish();
+              } else finish(new UploadError(`上传分段失败 (${xhr.status})`, xhr.status));
+            };
+            xhr.onerror = () => finish(new UploadError("云端上传连接失败，请检查网络后重试"));
+            xhr.ontimeout = () => finish(new UploadError("上传分段超时，请重试", 408));
+            xhr.onabort = () => finish(cancellation.signal.reason);
+            cancellation.signal.addEventListener("abort", abort, { once: true });
+            xhr.send(slice);
+          }), cancellation.signal);
+        }
+      } catch (error) {
+        cancellation.abort(error);
+        throw error;
+      }
+    }));
     const done = await retryUpload(() => postUploadControl("/api/upload/complete", { uploadKey: grant.uploadKey }));
     if (!done.success || done.uploadKey !== grant.uploadKey) throw new Error("上传确认失败");
     onProgress?.(100);
