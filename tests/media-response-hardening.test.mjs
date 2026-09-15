@@ -113,6 +113,28 @@ test("legacy public/uploads and public/jobs references remain readable for compa
   assert.equal(await job.text(), "final-video-bytes");
 });
 
+test("private local videos serve byte ranges so crop preview can seek", async () => {
+  const bytes="private-video-bytes";
+  for(const [range,start,end] of [["bytes=2-6",2,6],["bytes=8-",8,18],["bytes=-5",14,18],["bytes=10-999",10,18]]) {
+    const response=await media.servePrivateMedia(fakeRequest({range}),PRIVATE_VIDEO,{contentType:"video/mp4"});
+    assert.equal(response.status,206);
+    assert.equal(await response.text(),bytes.slice(start,end+1));
+    assert.equal(response.headers.get("content-range"),`bytes ${start}-${end}/${bytes.length}`);
+    assert.equal(response.headers.get("content-length"),String(end-start+1));
+    assert.equal(response.headers.get("accept-ranges"),"bytes");
+    assert.equal(response.headers.get("cache-control"),"private, no-store");
+    assert.equal(response.headers.get("x-content-type-options"),"nosniff");
+  }
+  for(const range of ["bytes=19-","bytes=9-2","bytes=-0","bytes=0-1,4-5","bytes=999999999999999999999999-"]) {
+    const response=await media.servePrivateMedia(fakeRequest({range}),PRIVATE_VIDEO);
+    assert.equal(response.status,416); assert.equal(response.headers.get("content-range"),"bytes */19");
+    assert.equal(await response.text(),"");
+  }
+  const head=await media.servePrivateMedia({...fakeRequest({range:"bytes=2-6"}),method:"HEAD"},PRIVATE_VIDEO);
+  assert.equal(head.status,206); assert.equal(head.headers.get("content-length"),"5"); assert.equal(await head.text(),"");
+  assert.equal((await media.servePrivateMedia(fakeRequest({range:"bytes=0-4"}),SECRET)).status,404);
+});
+
 test("allowed roots still 404 for missing files and directories", async () => {
   const missing = await media.servePrivateMedia(fakeRequest(), "/uploads/does-not-exist.mp4");
   assert.equal(missing.status, 404);

@@ -29,15 +29,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
     curl \
+    fonts-noto-cjk libnss3 libdbus-1-3 libatk1.0-0 libgbm1 libasound2 \
+    libxrandr2 libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 \
+    libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package and production node_modules
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/.motion-bundle ./.motion-bundle
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src ./src
+
+RUN npx remotion browser ensure
 
 # Create private runtime directories
 RUN mkdir -p /app/.runtime/jobs /app/.runtime/uploads /app/.runtime/provider-input

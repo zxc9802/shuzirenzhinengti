@@ -19,10 +19,22 @@ export class GenerationLimitError extends Error {
 
 // The attempt ledger survives task deletion and process restarts. Share the state
 // volume between worker processes; concurrency slots below are per process.
-export function acquireGenerationSlot(userId: string): () => void {
+export function acquireGenerationSlot(userId: string, options: {enforceHourlyLimit?: boolean} = {}): () => void {
   if (activeUsers.has(userId) || activeUsers.size >= MAX_ACTIVE) {
     throw new GenerationLimitError("生成任务正在处理中，请完成后再试");
   }
+  // Internal/local motion work still reserves concurrency, but is not an external attempt.
+  if (options.enforceHourlyLimit !== false) recordHourlyAttempt(userId);
+  activeUsers.add(userId);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeUsers.delete(userId);
+  };
+}
+
+function recordHourlyAttempt(userId: string): void {
   const file = process.env.GENERATION_LIMIT_PATH ||
     path.join(process.cwd(), ".runtime", "state", "generation-limits.json");
   const lock = `${file}.lock`;
@@ -62,11 +74,4 @@ export function acquireGenerationSlot(userId: string): () => void {
       fs.unlinkSync(lock);
     }
   }
-  activeUsers.add(userId);
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    activeUsers.delete(userId);
-  };
 }

@@ -34,3 +34,32 @@
 
 3. **系统配置**：
    进入 **「系统配置」** (`/settings`) 页面填入您的 `302.AI API Key`、音色参考直链及 `HeyGen API Key` 即可开始使用。
+
+## 数字人动效（独立模块）
+
+入口为 `/motion`，与制作台、形象库及对口型任务分开。用户上传完成粗剪的数字人视频，填写顶部两行标题，自动识别带时间戳的字幕、按口播整理底部总结；校对文字、时间与高亮词后，生成并下载 1080×1920 / 30fps MP4。支持导入 SRT、手动修改、重新整理、后台进度及最近任务恢复。
+
+自动识别字幕和模型总结默认使用简体中文，并通过服务端 [OpenCC](https://github.com/nk2028/opencc-js) 转换偶发的繁体输出；字幕时间、英文、数字和高亮词对应关系保留。手动输入和导入的 SRT 可按用户需要保留原文。
+
+人物画面支持手动裁剪：在固定比例的中间画框内拖动视频、调整 100%–300% 缩放，或用方向键微调；可拖动视频进度检查不同时间的画面，也可一键重置。裁剪设置随任务保存并用于整条成片，编辑器与 Remotion 共用同一变换。旧任务默认保持居中；完整画面模式仍可选择。
+
+- 三段式模板：顶部 456px（黄字纹理/双层描边 + 白字描边），人物 920px，底部 544px（绿色金边总结卡、逐行入场、关键词高亮划线）。可选择居中裁切或保留完整人物画面。
+- 预览和导出共用 `src/remotion/MotionComposition.tsx`。Remotion 渲染画面，FFmpeg 仅做音轨封装和验证；原音轨直接复制，不重新配音、不剪辑或变速。
+- 接受最长 10 分钟、最大 500MB 的 MP4/MOV，音轨需要 AAC、MP3 或 ALAC。建议上传无烧录字幕的剪辑版，避免字幕叠加。
+- 默认复用服务端 `INDEXTTS_302_API_KEY` / `INDEXTTS_BASE_URL`；可用 `MOTION_API_KEY`、`MOTION_API_BASE_URL` 单独配置。语音接口采用 `whisper-1` 的 `verbose_json` 字词时间戳；总结模型由 `MOTION_SUMMARY_MODEL` 设置，默认 `gpt-4o-mini`。无可用识别服务时会保留失败状态，可导入 SRT 并手动补全总结。
+- 任务保存在 `.runtime/state/motion-projects.json`；文件保存在 `.runtime/jobs/motion_<UUID>/`。已配置 COS 时同步任务和成片到私有存储，所有读取及下载经过账号归属校验。独立使用生成并发/频率限制，不调用数字人口型生成链路及其积分预扣接口。
+- 重启会把未完成任务标记为可重试，避免一直显示处理中。服务部署需保留 `.runtime` 持久卷（本地上传及中间文件）或配置现有 COS。当前执行方式沿用项目的单服务后台任务模式，未实现多副本分布式队列。
+
+开发：`npm run dev`。模板调试：`npm run motion:studio`。生产构建 `npm run build` 会先打包 Remotion 模板到 `.motion-bundle`。Dockerfile 已加入 Chromium 所需库、中文字体和浏览器安装步骤；本机首次渲染会由 Remotion 下载 Chrome Headless Shell，也可设置 `REMOTION_BROWSER_EXECUTABLE` 指定路径。
+
+接口参考：[302 语音转文字](https://doc.302.ai/147522049e0)、[Remotion 服务端渲染](https://www.remotion.dev/docs/renderer/render-media)、[Remotion Docker 部署](https://www.remotion.dev/docs/docker)。
+
+### 动效库与编程助手
+
+`/motion` 页面底部是动效库，历史记录入口位于顶部步骤栏右侧。用户可以用简体中文需求和最多 4 个图片/视频素材创建动效，继续对话修改、预览、保存，再应用到成片的底部总结区。顶部标题文字和中间人物裁剪沿用当前任务设置，顶部背景跟随动效配色；每段口播的总结文字会替换动效示例文案。已应用任务记录具体动效版本，后续修改模板不会改变旧任务。
+
+服务端使用实际的 Pi coding agent SDK（`@mariozechner/pi-coding-agent@0.73.1`，兼容当前 Node 20 容器），通过 `MOTION_AGENT_BASE_URL`、`MOTION_AGENT_MODEL`、`MOTION_AGENT_API_KEY` 配置 DeepSeek。Pi 可调用 `read_effect`、`write_effect`、`render_preview`，自行修正代码并通过真实 Remotion 试渲染后才生成可保存版本。每次最多 12 次工具调用、3 次试渲染、10 分钟，调用证据保存在任务目录的 `agent-evidence-N.json`，不记录 API Key 或模型思考内容。SDK 的通用 Shell、文件系统工具和用户目录扩展未启用。
+
+图片支持 PNG/JPEG/WebP（10 MB 内），视频支持 MP4/MOV/WebM/M4V（100 MB 内），视频使用前 15 秒静音循环。当前配置的 DeepSeek 通道实测拒绝图片输入，因此素材以本地提取的尺寸、时长、平均色和用户描述参与编程，默认仅作风格参考，用户明确要求时才会放进输出画面；不能自动理解或逐帧复刻参考图/视频。接口恢复视觉能力之前，用户需描述希望参考的颜色、布局和运动。
+
+生成代码先经 AST 规则检查；前端在不含同源权限的 iframe 中运行，仅接收当前动效素材与总结文字，禁止网络访问。导出在单独的渲染浏览器中运行，只允许读取该任务的本地媒体服务。动效库按账号私有隔离，管理员也不能跨账号读取、修改或应用他人的动效；历史版本、预览和素材链接同样校验归属。新建归属取服务端登录身份，密钥仅保存在服务端环境变量。`npm run motion:bundle` 同时生成可信的 iframe 运行入口 `public/effect-frame.js`，开发时修改该运行入口后需重新打包。

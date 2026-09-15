@@ -227,15 +227,32 @@ export async function servePrivateMedia(
     const headers = new Headers({
       "Content-Type": options.contentType || "application/octet-stream",
       "Content-Length": String(stat.size),
+      "Accept-Ranges": "bytes",
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     });
     if (options.downloadName) {
       headers.set("Content-Disposition", `attachment; filename="${options.downloadName}"`);
     }
-    return new Response(Readable.toWeb(fs.createReadStream(localPath)) as ReadableStream, {
-      headers,
-    });
+    let status = 200, rangeOptions: {start: number; end: number} | undefined;
+    const range = req.headers.get("range");
+    if (range) {
+      const match = range.match(/^bytes=(\d*)-(\d*)$/);
+      const first = match?.[1] ? Number(match[1]) : undefined;
+      const last = match?.[2] ? Number(match[2]) : undefined;
+      const start = first ?? Math.max(0, stat.size - (last ?? 0));
+      const end = first === undefined ? stat.size - 1 : Math.min(last ?? stat.size - 1, stat.size - 1);
+      if (!match || (first === undefined && !last) ||
+        (first !== undefined && !Number.isSafeInteger(first)) || (last !== undefined && !Number.isSafeInteger(last)) ||
+        start >= stat.size || end < start) {
+        headers.set("Content-Range", `bytes */${stat.size}`); headers.set("Content-Length", "0");
+        return new Response(null, {status: 416, headers});
+      }
+      status = 206; rangeOptions = {start, end};
+      headers.set("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+      headers.set("Content-Length", String(end - start + 1));
+    }
+    return new Response(req.method === "HEAD" ? null : Readable.toWeb(fs.createReadStream(localPath, rangeOptions)) as ReadableStream, {status, headers});
   }
 
   const upstream = await fetchAllowedRemote(source, {

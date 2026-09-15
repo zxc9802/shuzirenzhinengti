@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, History, Users, Mic, Coins, User } from "lucide-react";
+import { Video, History, Users, Mic, Coins, User, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SessionData {
@@ -49,6 +49,7 @@ export default function Navbar() {
 
   const navItems = [
     { name: "制作台", href: "/", icon: Video },
+    { name: "数字人动效", href: "/motion", icon: Sparkles },
     { name: "形象库", href: "/avatars", icon: Users },
     { name: "声音库", href: "/voices", icon: Mic },
     { name: "任务历史", href: "/history", icon: History },
@@ -75,8 +76,8 @@ export default function Navbar() {
         </Link>
 
         {/* Navigation Items */}
-        <div className="flex items-center gap-2 sm:gap-4">
-          <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0 overflow-hidden">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+          <nav className="flex items-center gap-1 sm:gap-1.5 min-w-0 overflow-x-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = pathname === item.href;
