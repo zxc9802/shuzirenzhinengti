@@ -1,9 +1,11 @@
+import type {SemanticPolicy} from './visual';
 export interface EffectRef {id: string; revision: number}
 export interface EffectAsset {id: string; name: string; kind: 'image' | 'video'; url: string; width: number; height: number; duration: number; description: string}
-export interface EffectTemplate {compiled: string; assets: EffectAsset[]; backgroundColor?: string}
+export interface EffectTemplate {compiled: string; assets: EffectAsset[]; backgroundColor?: string; semantics?: SemanticPolicy}
 export interface EffectMessage {role: 'user' | 'assistant'; content: string}
 export interface LibraryEffect {
   builtin?: boolean;
+  semantics?: SemanticPolicy;
   id: string; name: string; status: 'building' | 'ready' | 'failed'; message: string; error?: string;
   revision: number; saved: boolean; updatedAt: number; messages: EffectMessage[];
   assets: EffectAsset[]; previewUrl?: string; template?: EffectTemplate;
@@ -19,6 +21,6 @@ export function validateEffectBackground(value: unknown): string | undefined {
 export function validateEffectRef(value: unknown): EffectRef | undefined {
   if (value === undefined || value === null) return undefined;
   const r = value as EffectRef;
-  if ((!isEffectId(r.id) && !isBuiltinEffectId(r.id)) || !Number.isInteger(r.revision) || r.revision < 1 || (isBuiltinEffectId(r.id) && r.revision !== 1)) throw new Error('请选择已保存的动效');
+  if ((!isEffectId(r.id) && !isBuiltinEffectId(r.id)) || !Number.isInteger(r.revision) || r.revision < 1 || (isBuiltinEffectId(r.id) && r.revision > (r.id==='builtin_green_diagram'?2:1))) throw new Error('请选择已保存的动效');
   return {id: r.id, revision: r.revision};
 }

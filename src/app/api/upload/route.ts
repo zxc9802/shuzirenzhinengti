@@ -18,8 +18,10 @@ import {
   validateUploadDescriptor,
 } from "@/lib/server/upload-policy";
 import { resolveAccessContext, unauthorizedResponse } from "@/lib/access-control";
+import { logServerError } from "@/lib/server/safe-log";
 
 const ALLOWED_FOLDERS = new Set<UploadFolder>(["videos", "voices", "thumbnails"]);
+class UploadContentError extends Error {}
 
 export async function POST(req: NextRequest) {
   let outputPath = "";
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
     const limiter = new Transform({
       transform(chunk, _encoding, callback) {
         received += chunk.length;
-        callback(received > fileSize ? new Error("上传内容超过声明大小") : null, chunk);
+        callback(received > fileSize ? new UploadContentError("上传文件大小不一致，请重新上传") : null, chunk);
       },
     });
     await pipeline(
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
       fs.createWriteStream(outputPath)
     );
     if (received !== fileSize) {
-      throw new Error("上传内容大小与声明不一致");
+      throw new UploadContentError("上传未完成，文件内容不完整，请重新上传");
     }
 
     let storedRemotely = false;
@@ -98,7 +100,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, uploadKey, storedRemotely });
-  } catch {
+  } catch (error) {
     if (uploadKey) {
       cancelPendingUpload(uploadKey);
       try { await CosService.deleteObject(uploadKey); } catch {}
@@ -106,6 +108,10 @@ export async function POST(req: NextRequest) {
     if (outputPath) {
       try { fs.unlinkSync(outputPath); } catch {}
     }
-    return NextResponse.json({ error: "上传异常，请稍后重试" }, { status: 500 });
+    if (error instanceof UploadContentError) {
+      return NextResponse.json({ error: error.message, code: "UPLOAD_CONTENT_MISMATCH" }, { status: 400 });
+    }
+    logServerError("upload.receive", error);
+    return NextResponse.json({ error: "服务器未能保存上传文件，请稍后重试" }, { status: 500 });
   }
 }

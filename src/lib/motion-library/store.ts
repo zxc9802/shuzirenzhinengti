@@ -1,3 +1,4 @@
+import type {SemanticPolicy} from './visual';
 import 'server-only';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import {getAppConfig} from '@/lib/config';
 import {CosService} from '@/lib/cos';
 import {isEffectId, type LibraryEffect, type EffectAsset, type EffectMessage} from './contract';
 export interface StoredAsset extends Omit<EffectAsset,'url'> {source:string}
-export interface EffectVersion {revision:number; sourceCode:string; compiled:string; preview:string; assets:StoredAsset[]; backgroundColor?:string}
+export interface EffectVersion {revision:number; sourceCode:string; compiled:string; preview:string; assets:StoredAsset[]; backgroundColor?:string; semantics?:SemanticPolicy}
 export interface StoredEffect {
   id:string; userId?:string; name:string; status:LibraryEffect['status']; message:string; error?:string;
   saved:boolean; revision:number; updatedAt:number; messages:EffectMessage[]; assets:StoredAsset[]; versions:EffectVersion[];
@@ -34,5 +35,5 @@ export const EffectStore={
 export function publicEffect(row:StoredEffect, detail=false, revision=row.revision):LibraryEffect {
   const version=row.versions.find(v=>v.revision===revision);
   const assets=(version?.assets||row.assets).map(({source,...a})=>({...a,url:`/api/motion-library/${row.id}/media/${a.id}${a.kind==='image'?'.jpg':'.mp4'}`}));
-  return {id:row.id,name:row.name,status:row.status,message:row.message,error:row.error,saved:row.saved,revision,updatedAt:row.updatedAt,messages:detail?row.messages:[],assets,previewUrl:version?`/api/motion-library/${row.id}/media/preview-${revision}.mp4`:undefined,...(detail&&version?{template:{compiled:version.compiled,assets,backgroundColor:version.backgroundColor}}:{})};
+  return {id:row.id,name:row.name,status:row.status,message:row.message,error:row.error,saved:row.saved,semantics:version?.semantics,revision,updatedAt:row.updatedAt,messages:detail?row.messages:[],assets,previewUrl:version?`/api/motion-library/${row.id}/media/preview-${revision}.mp4`:undefined,...(detail&&version?{template:{compiled:version.compiled,assets,backgroundColor:version.backgroundColor,semantics:version.semantics}}:{})};
 }

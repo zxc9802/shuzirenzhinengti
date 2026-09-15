@@ -100,9 +100,9 @@ test('motion edit endpoints enforce login, ownership, valid timing and one activ
   const route=loadRoute('../src/app/api/motion/[id]/route.ts',deps);
   const ctx={params:Promise.resolve({id:'motion_test'})};
   const patch=body=>route.PATCH(new NextRequest('http://localhost/api/motion/motion_test',{method:'PATCH',body:JSON.stringify(body)}),ctx);
-  assert.equal((await patch({...edit,action:'render'})).status,401);
+  for(const action of ['render','prepare']) assert.equal((await patch({...edit,action})).status,401);
   access={...access,userId:'stranger'};
-  assert.equal((await patch({...edit,action:'render'})).status,404);
+  for(const action of ['render','prepare']) assert.equal((await patch({...edit,action})).status,404);
   assert.equal((await route.GET(new NextRequest('http://localhost'),ctx)).status,404);
   access={...access,userId:'owner'};
   assert.equal((await patch({...edit,crop:{x:2,y:0.5,zoom:1},action:'save'})).status,400);

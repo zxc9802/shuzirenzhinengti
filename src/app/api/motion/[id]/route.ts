@@ -29,7 +29,7 @@ export async function PATCH(req: NextRequest, ctx: Context) {
     const raw = await req.text();
     if (raw.length > 300_000) throw new MotionInputError("提交内容过大");
     const body = JSON.parse(raw);
-    if (!["save", "analyze", "render"].includes(body.action)) throw new MotionInputError("无效操作");
+    if (!["save", "analyze", "render", "prepare"].includes(body.action)) throw new MotionInputError("无效操作");
     if (!project.duration) throw new MotionInputError("视频未成功读取，请重新上传");
     const edit = validateMotionEdit(body, project.duration, body.action === "render");
     if (edit.effect) await (await import("@/lib/motion-library/service")).ownedEffectVersion(edit.effect, access);

@@ -149,5 +149,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Raw uploads authenticate inside the route and must stream without Next's 10 MB body clone.
+  // Keep /api/upload/direct and /api/upload/complete behind middleware as well as their own checks.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/upload/?$).*)"],
 };

@@ -90,6 +90,17 @@ test("installations without COS keep their existing local upload behavior", asyn
   } finally { globalThis.fetch = originalFetch; globalThis.XMLHttpRequest = originalXhr; }
 });
 
+test('local upload shows the server explanation instead of only an HTTP status',async()=>{
+  const originalFetch=globalThis.fetch,originalXhr=globalThis.XMLHttpRequest;
+  globalThis.fetch=async()=>Response.json({direct:false});
+  globalThis.XMLHttpRequest=class{
+    upload={};open(){}setRequestHeader(){}
+    send(){this.status=400;this.responseText=JSON.stringify({error:'上传未完成，请重新上传'});queueMicrotask(()=>this.onload());}
+  };
+  try{await assert.rejects(uploadMediaFile(new Blob(['video'],{type:'video/mp4'}),'video.mp4'),/^Error: 上传未完成，请重新上传$/);}
+  finally{globalThis.fetch=originalFetch;globalThis.XMLHttpRequest=originalXhr;}
+});
+
 
 test("uploads at most three parts concurrently, refills free slots and preserves byte order and aggregate progress", async () => {
   const originalFetch = globalThis.fetch;

@@ -7,7 +7,8 @@ import {execMediaCommand,probeMedia} from '@/lib/engine/ffmpeg';
 import {logServerError} from '@/lib/server/safe-log';
 import {CosService} from '@/lib/cos';
 import {EffectStore,effectDirectory,type StoredAsset,type EffectVersion} from './store';
-import {validateEffectBackground} from './contract';
+import {validateEffectBackground, EFFECT_SAMPLE} from './contract';
+import {classifyTemplate, prepareSemanticScenes} from './semantics';
 export function runEffectProcess(input:string,onMessage:(message:string)=>void) {
   return new Promise<void>((resolve,reject)=>{
     const env:NodeJS.ProcessEnv={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,NODE_ENV:process.env.NODE_ENV,MOTION_AGENT_API_KEY:process.env.MOTION_AGENT_API_KEY,MOTION_AGENT_BASE_URL:process.env.MOTION_AGENT_BASE_URL,MOTION_AGENT_MODEL:process.env.MOTION_AGENT_MODEL,REMOTION_BROWSER_EXECUTABLE:process.env.REMOTION_BROWSER_EXECUTABLE};
@@ -50,9 +51,13 @@ export async function runLibraryEffect(id:string) {
     const dir=effectDirectory(id);fs.mkdirSync(dir,{recursive:true});
     update('正在准备参考素材');await queue;
     const assets:StoredAsset[]=[];for(const asset of row.assets)assets.push(await prepareAsset(asset,id));
-    row=await EffectStore.save({...row,assets,message:'正在设计动效'});
+    row=await EffectStore.save({...row,assets,message:'正在判断模板是否需要理解内容'});
+    const semantics=await classifyTemplate({messages:row.messages.slice(-16),assets:assets.map(a=>({description:a.description})),currentCode:row.versions.at(-1)?.sourceCode||''});
+    row=await EffectStore.save({...row,message:semantics.required?'需要理解内容，正在准备图解示例':'无需额外内容分析，正在设计动效'});
+    const sample=semantics.required?{...EFFECT_SAMPLE,headline:'经验变成团队能力',line1:'沉淀销冠经验',line2:'让新人也能复用',highlight:'复用'}:EFFECT_SAMPLE;
+    const prepared=await prepareSemanticScenes({effect:{id,revision:row.revision+1},policy:semantics,scenes:[sample],captions:[{start:0,end:6,text:'把销冠的经验沉淀成知识库，让新人也能复用。'}]});
     const input=path.join(dir,'agent-input.json');
-    fs.writeFileSync(input,JSON.stringify({dir,messages:row.messages.slice(-16),assets:assets.map(a=>({...a,url:a.source})),currentCode:row.versions.at(-1)?.sourceCode||'',backgroundColor:row.versions.at(-1)?.backgroundColor,name:row.name}),{mode:0o600});
+    fs.writeFileSync(input,JSON.stringify({dir,semantics,previewScenes:prepared.scenes,messages:row.messages.slice(-16),assets:assets.map(a=>({...a,url:a.source})),currentCode:row.versions.at(-1)?.sourceCode||'',backgroundColor:row.versions.at(-1)?.backgroundColor,name:row.name}),{mode:0o600});
     await runEffectProcess(input,update);await queue;
     const result=JSON.parse(fs.readFileSync(path.join(dir,'agent-result.json'),'utf8'));
     const backgroundColor=validateEffectBackground(result.backgroundColor);
@@ -63,7 +68,7 @@ export async function runLibraryEffect(id:string) {
     const storedAssets:StoredAsset[]=[];
     for(const a of assets)storedAssets.push({...a,source:CosService.isConfigured()?await CosService.uploadFile(a.source,`jobs/${id}/${path.basename(a.source)}`):a.source});
     if(CosService.isConfigured())storedPreview=await CosService.uploadFile(preview,`jobs/${id}/${path.basename(preview)}`);
-    const version:EffectVersion={revision,sourceCode:result.sourceCode,compiled:result.compiled,preview:storedPreview,assets:storedAssets,backgroundColor};
+    const version:EffectVersion={revision,sourceCode:result.sourceCode,compiled:result.compiled,preview:storedPreview,assets:storedAssets,backgroundColor,semantics};
     await EffectStore.save({...row,revision,status:'ready',message:'动效已生成，可预览并继续修改',error:undefined,assets:storedAssets,versions:[...row.versions,version],messages:[...row.messages,{role:'assistant',content:result.summary||'动效已完成并通过试渲染。可以预览、继续修改或保存应用。'}]});
   }catch(error){await queue.catch(()=>{});logServerError('motion-library.generate',error);await EffectStore.save({...row!,status:'failed',message:'生成失败，可调整描述后重试',error:row!.revision?'本次生成未完成，之前可用的版本已保留。请重试或调整描述。':'本次生成未完成，请重试或调整描述。'});}
 }

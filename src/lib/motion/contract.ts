@@ -1,7 +1,9 @@
+import {validateVisualPlan, type VisualPlan} from '../motion-library/visual';
 import {validateEffectRef, type EffectRef} from "../motion-library/contract";
 export type MotionStatus = "analyzing" | "ready" | "rendering" | "completed" | "failed";
 export interface MotionCaption { start: number; end: number; text: string }
 export interface MotionScene {
+  visual?: VisualPlan;
   start: number; end: number; headline: string; line1: string; line2: string; highlight: string;
   diagramLayout?: 'flow' | 'branch' | 'merge' | 'equation';
 }
@@ -59,7 +61,9 @@ export function validateMotionEdit(value: unknown, duration: number, requireCont
     const result = {headline: text(s.headline, "总结标题", 18), line1: text(s.line1, "总结第一行", 26), line2: text(s.line2, "总结第二行", 26, true), highlight: text(s.highlight ?? "", "高亮词", 12, true)};
     if (result.highlight && !(result.line1 + result.line2).includes(result.highlight)) throw new MotionInputError("高亮词必须出现在总结正文中");
     if(s.diagramLayout!==undefined&&!['flow','branch','merge','equation'].includes(s.diagramLayout as string))throw new MotionInputError('请选择有效的图解结构');
-    return {...result,...(s.diagramLayout?{diagramLayout:s.diagramLayout as MotionScene['diagramLayout']}:{})};
+    let visual: VisualPlan | undefined;
+    try { if (s.visual !== undefined) visual = validateVisualPlan(s.visual); } catch { throw new MotionInputError('图解内容无效，请重新分析'); }
+    return {...result,...(visual ? {visual} : {}),...(s.diagramLayout?{diagramLayout:s.diagramLayout as MotionScene['diagramLayout']}:{})};
   });
   if (requireContent && (!captions.length || !scenes.length)) throw new MotionInputError("请先补充字幕和底部总结");
   return {title: text(row.title, "顶部第一行标题", 22), subtitle: text(row.subtitle, "顶部第二行标题", 26), fit: row.fit, crop: {x: crop.x, y: crop.y, zoom: crop.zoom}, captions, scenes, ...(effect ? {effect} : {})};

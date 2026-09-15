@@ -82,11 +82,12 @@ export default function MotionPage() {
       setProject(data.project); setEdit(data.project); setDirty(false); setNotice(""); void refreshList();
     } catch (err) {setError((err as Error).message); setNotice("");} finally {setPending(false);}
   }
-  async function act(action: "save" | "analyze" | "render") {
+  async function act(action: "save" | "analyze" | "render" | "prepare", currentEdit = edit) {
     if (!project) return;
     setPending(true); setError(""); setNotice("");
     try {
-      const validated = validateMotionEdit(edit, project.duration, action === "render");
+      const validated = validateMotionEdit(currentEdit, project.duration, action === "render");
+      if (action === "save" && effectTemplate?.semantics?.required && validated.scenes.length) action = "prepare";
       const data = await api(`/api/motion/${project.id}`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({...validated, action})});
       setProject(data.project); setEdit(data.project); setDirty(false); if (action === "save") setNotice("修改已保存"); void refreshList();
     } catch (err) {setError((err as Error).message);} finally {setPending(false);}
@@ -100,11 +101,17 @@ export default function MotionPage() {
     if(edit.effect) void api(`/api/motion-library/${edit.effect.id}?revision=${edit.effect.revision}`).then(data=>{if(!stopped){setEffectTemplate(data.effect.template);setEffectName(data.effect.name);}}).catch(err=>{if(!stopped)setError(err.message);});
     return()=>{stopped=true;};
   },[edit.effect?.id,edit.effect?.revision]);
-  function applyEffect(effect:LibraryEffect){change({effect:{id:effect.id,revision:effect.revision}});setNotice(`已应用「${effect.name}」，生成成片时会使用当前总结文字`);document.getElementById("motion-preview")?.scrollIntoView({behavior:"smooth",block:"center"});}
+  function applyEffect(effect:LibraryEffect){
+    const next={...edit,effect:{id:effect.id,revision:effect.revision},scenes:edit.scenes.map(({visual:_visual,...s})=>s)};
+    change(next);
+    if(effect.semantics?.required&&project&&next.scenes.length)void act("prepare",next);
+    else setNotice(effect.semantics?.required?`已应用「${effect.name}」，整理口播时会自动编排图解`:`已应用「${effect.name}」，生成成片时会使用当前总结文字`);
+    document.getElementById("motion-preview")?.scrollIntoView({behavior:"smooth",block:"center"});
+  }
   const duration = project?.duration || sourceDuration || 10;
   const preview = {...edit, effectTemplate, title: edit.title || "什么是超级员工？", subtitle: edit.subtitle || "给普通人配一个超级外挂", duration, sourceUrl: localUrl || project?.sourceUrl || ""};
   const scenes = edit.scenes;
-  const diagram = edit.effect?.id === 'builtin_green_diagram';
+  const diagram = edit.effect?.id === 'builtin_green_diagram' && edit.effect.revision === 1;
   const updateCaption = (index: number, changes: Partial<MotionCaption>) => change({captions: edit.captions.map((c, i) => i === index ? {...c, ...changes} : c)});
   const feedback = <>{(error || project?.error) && <div ref={errorAlert} tabIndex={-1} role="alert" className="motion-alert">{error || project?.error}</div>}{notice && <div role="status" className="motion-notice">{notice}{pending && !project && notice === "正在上传最终剪辑版" ? ` ${uploadProgress}%` : ""}</div>}</>;
   return <main className="motion-workspace">
@@ -133,7 +140,7 @@ export default function MotionPage() {
           <div className="motion-tabs"><button className={tab === "scenes" ? "selected" : ""} onClick={() => setTab("scenes")}>底部总结 <span>{scenes.length}</span></button><button className={tab === "captions" ? "selected" : ""} onClick={() => setTab("captions")}>口播字幕 <span>{edit.captions.length}</span></button><button className="motion-import" disabled={busy} onClick={() => srtInput.current?.click()}>导入 SRT</button></div>
           <p className="motion-help">{tab === "scenes" ? diagram ? "每段口播对应一张图解，可选流程、分支、汇总或公式。三个文案依次对应图中节点，使用简短概念更清晰；高亮词需出现在第二或第三个节点中。" : "每张卡片对应一段口播，最多一个短标题、两行总结。高亮词需出现在正文里。" : "校对识别文字和出现时间；已有字幕的源视频建议先导出无字幕版本，避免叠字。"}</p>
           <div className="motion-timeline">{tab === "scenes" ? scenes.map((s, i) => <div className="motion-scene" key={i}><div className="motion-time"><strong>片段 {String(i+1).padStart(2, "0")}</strong><label>开始 <input aria-label={`总结 ${i+1} 开始秒`} type="number" min={0} step={0.1} value={s.start} disabled={busy} onChange={e => change({scenes: scenes.map((item, j) => j === i ? {...item, start: Number(e.target.value)} : item)})}/></label><span>—</span><label>结束 <input aria-label={`总结 ${i+1} 结束秒`} type="number" min={0} step={0.1} value={s.end} disabled={busy} onChange={e => change({scenes: scenes.map((item, j) => j === i ? {...item, end: Number(e.target.value)} : item)})}/></label><button aria-label={`删除总结 ${i+1}`} disabled={busy} onClick={() => change({scenes: scenes.filter((_, j) => j !== i)})}><Trash2 size={15}/></button></div>
-            {diagram&&<label className="motion-row-field"><span>图解结构</span><select aria-label={`总结 ${i+1} 图解结构`} value={s.diagramLayout||'flow'} disabled={busy} onChange={e=>change({scenes:scenes.map((item,j)=>j===i?{...item,diagramLayout:e.target.value as MotionScene['diagramLayout']}:item)})}><option value="flow">流程：一 → 二 → 三</option><option value="branch">分支：一 → 二 / 三</option><option value="merge">汇总：一 / 二 → 三</option><option value="equation">公式：一 + 二 = 三</option></select></label>}
+            {s.visual&&<p className="motion-help">已按内容编排：{s.visual.nodes.map(n=>n.label).join(" · ")}。修改总结并保存后更新图解。</p>}{diagram&&<label className="motion-row-field"><span>图解结构</span><select aria-label={`总结 ${i+1} 图解结构`} value={s.diagramLayout||'flow'} disabled={busy} onChange={e=>change({scenes:scenes.map((item,j)=>j===i?{...item,diagramLayout:e.target.value as MotionScene['diagramLayout']}:item)})}><option value="flow">流程：一 → 二 → 三</option><option value="branch">分支：一 → 二 / 三</option><option value="merge">汇总：一 / 二 → 三</option><option value="equation">公式：一 + 二 = 三</option></select></label>}
             {([['headline', '短标题', 18], ['line1', '总结第一行', 26], ['line2', '总结第二行（选填）', 26], ['highlight', '高亮词（选填）', 12]] as const).map(([key, label, max],fieldIndex) => <label className="motion-row-field" key={key}><span>{diagram&&fieldIndex<3?`节点${['一','二','三（选填）'][fieldIndex]}`:label}</span><input maxLength={max} value={s[key]} disabled={busy} onChange={e => change({scenes: scenes.map((item, j) => j === i ? {...item, [key]: e.target.value} : item)})}/></label>)}</div>) : edit.captions.map((c, i) => <div className="motion-caption" key={i}><div className="motion-time"><strong>{i+1}</strong><input aria-label={`字幕 ${i+1} 开始秒`} type="number" min={0} step={0.1} value={c.start} disabled={busy} onChange={e => updateCaption(i, {start: Number(e.target.value)})}/><span>—</span><input aria-label={`字幕 ${i+1} 结束秒`} type="number" min={0} step={0.1} value={c.end} disabled={busy} onChange={e => updateCaption(i, {end: Number(e.target.value)})}/><button aria-label={`删除字幕 ${i+1}`} disabled={busy} onClick={() => change({captions: edit.captions.filter((_, j) => j !== i)})}><Trash2 size={14}/></button></div><textarea aria-label={`字幕 ${i+1} 文字`} value={c.text} maxLength={80} disabled={busy} rows={2} onChange={e => updateCaption(i, {text: e.target.value})}/></div>)}</div>
           {!busy && <button className="motion-add" onClick={() => tab === "scenes" ? change({scenes: [...scenes, {start: scenes.at(-1)?.end || 0, end: duration, headline: "", line1: "", line2: "", highlight: ""}]}) : change({captions: [...edit.captions, {start: edit.captions.at(-1)?.end || 0, end: duration, text: ""}]})}><Plus size={15}/>添加{tab === "scenes" ? "总结片段" : "字幕"}</button>}
           <div className="motion-editor-actions"><button className="motion-button secondary" disabled={busy || !dirty} onClick={() => act("save")}><Save size={15}/>{dirty ? "保存修改" : "已保存"}</button><button className="motion-text-button" disabled={busy} onClick={() => act("analyze")}><RotateCcw size={14}/>{edit.captions.length ? "重新整理总结" : "重试自动识别"}</button></div>

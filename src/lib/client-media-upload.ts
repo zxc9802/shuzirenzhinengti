@@ -112,7 +112,12 @@ export async function uploadMediaFile(
     };
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(`上传异常 (${xhr.status})`));
+        let message = `上传失败 (${xhr.status})，请重试`;
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (typeof data.error === "string" && data.error) message = data.error;
+        } catch {}
+        reject(new Error(message));
         return;
       }
       try {

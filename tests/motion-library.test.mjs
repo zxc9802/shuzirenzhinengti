@@ -75,7 +75,8 @@ test('library edit and apply enforce session, ownership, saved versions and uplo
     await assert.rejects(service.ownedEffectVersion({id,revision:1},access),MotionInputError);
     for(const builtin of listBuiltinEffects()){
       const resolved=await service.ownedEffectVersion({id:builtin.id,revision:1},access);assert.equal(resolved.row.id,builtin.id);assert.ok(resolved.version.compiled);
-      await assert.rejects(service.ownedEffectVersion({id:builtin.id,revision:2},access),MotionInputError);
+      const latest=await service.ownedEffectVersion({id:builtin.id,revision:builtin.revision},access);assert.equal(latest.version.revision,builtin.revision);
+      await assert.rejects(service.ownedEffectVersion({id:builtin.id,revision:99},access),MotionInputError);
       for(const action of ['save','generate'])assert.equal((await service.editLibrary(new NextRequest('http://localhost/api/motion-library/'+builtin.id,{method:'PATCH',body:JSON.stringify({action,prompt:'change fixed template'})}),builtin.id)).status,400);
     }
     assert.equal(saved,0);assert.equal(runs,0);
@@ -120,7 +121,7 @@ test('library list and revision detail stay private for owners, admins and local
   };
   const list=load('../src/app/api/motion-library/route.ts',deps),detail=load('../src/app/api/motion-library/[id]/route.ts',deps);
   const req=new NextRequest('http://localhost/api/motion-library?userId=owner');
-  const get=target=>detail.GET(new NextRequest('http://localhost/api/motion-library/'+target+'?revision=1'),{params:Promise.resolve({id:target})});
+  const get=(target,revision=1)=>detail.GET(new NextRequest('http://localhost/api/motion-library/'+target+'?revision='+revision),{params:Promise.resolve({id:target})});
   assert.equal((await list.GET(req)).status,401);assert.equal((await get(id)).status,401);
   for(const [userId,isAdmin,expected] of [['owner',false,id],['other',false,'effect_other'],['other',true,'effect_other'],['admin',true,null]]){
     access={isolated:true,userId,isAdmin};
@@ -128,6 +129,8 @@ test('library list and revision detail stay private for owners, admins and local
     const body=await response.json();assert.deepEqual(body.effects.map(r=>r.id),expected?[expected]:[]);
     assert.deepEqual(body.builtins.map(r=>r.id),['builtin_green_text','builtin_green_diagram']);
     for(const builtin of body.builtins){assert.equal(builtin.builtin,true);assert.equal(builtin.template,undefined);assert.equal((await get(builtin.id)).status,200);}
+    const diagram=await get('builtin_green_diagram',2);assert.equal(diagram.status,200);assert.equal((await diagram.json()).effect.template.semantics.required,true);
+    assert.equal((await get('builtin_green_diagram',99)).status,404);assert.equal((await get('builtin_green_text',2)).status,404);
     for(const r of rows)assert.equal((await get(r.id)).status,r.userId===userId?200:404);
   }
   access={isolated:false,userId:null,isAdmin:true};
@@ -135,13 +138,20 @@ test('library list and revision detail stay private for owners, admins and local
   assert.equal((await get(id)).status,404);assert.equal((await get('effect_local')).status,200);
 });
 
-test('fixed templates retain source parity, immutable revisions and diagram settings without AI calls',()=>{
+test('fixed templates retain legacy source parity and expose the semantic diagram as a new revision',()=>{
   for(const [id,name] of [['builtin_green_text','GreenText'],['builtin_green_diagram','GreenDiagram']]){
     const ref={id,revision:1};assert.deepEqual(validateEffectRef(ref),ref);
-    assert.throws(()=>validateEffectRef({...ref,revision:2}));
+    assert.throws(()=>validateEffectRef({...ref,revision:99}));
     const fixed=getBuiltinEffect(id);assert.equal(fixed.versions[0].compiled,compileEffect(fs.readFileSync(new URL(`../src/remotion/templates/${name}.tsx`,import.meta.url),'utf8')));
     assert.deepEqual(fixed.assets,[]);assert.equal(publicBuiltinEffect(id,true).template.backgroundColor,'#194b36');
   }
+  assert.throws(()=>validateEffectRef({id:'builtin_green_text',revision:2}));
+  const semantic=publicBuiltinEffect('builtin_green_diagram',true);
+  assert.deepEqual(validateEffectRef({id:semantic.id,revision:2}),{id:semantic.id,revision:2});
+  assert.equal(semantic.template.compiled,compileEffect(fs.readFileSync(new URL('../src/remotion/templates/GreenSemanticDiagram.tsx',import.meta.url),'utf8')));
+  assert.equal(semantic.semantics.required,true);assert.equal(semantic.template.semantics.required,true);
+  assert.equal(publicBuiltinEffect('builtin_green_diagram',true,1).semantics,undefined);
+  assert.equal(publicBuiltinEffect('builtin_green_diagram',true,99),undefined);
   assert.equal(getBuiltinEffect('builtin_arbitrary'),undefined);assert.throws(()=>validateEffectRef({id:'builtin_arbitrary',revision:1}));
   const edit={title:'固定标题',subtitle:'固定副标题',fit:'cover',effect:{id:'builtin_green_diagram',revision:1},captions:[{start:0,end:6,text:'企业知识库帮助新人上手'}],scenes:[{start:0,end:6,headline:'企业知识库',line1:'数字员工',line2:'新人上手',highlight:'上手'}]};
   for(const diagramLayout of ['flow','branch','merge','equation'])assert.equal(validateMotionEdit({...edit,scenes:[{...edit.scenes[0],diagramLayout}]},6,true).scenes[0].diagramLayout,diagramLayout);

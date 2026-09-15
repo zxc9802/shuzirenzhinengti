@@ -9,6 +9,7 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
   const [effects,setEffects]=useState<LibraryEffect[]>([]),[selected,setSelected]=useState<LibraryEffect|null>(null),[editing,setEditing]=useState(false);
   const [prompt,setPrompt]=useState(''),[name,setName]=useState(''),[files,setFiles]=useState<File[]>([]),[pending,setPending]=useState(false),[error,setError]=useState(''),[uploadStatus,setUploadStatus]=useState('');
   const input=useRef<HTMLInputElement>(null),editor=useRef<HTMLDivElement>(null);
+  const selection=useRef(0),requestedEffect=useRef<string|undefined>(undefined);
   const building=selected?.status==='building',busy=pending||building;
   async function refresh(){const data=await request('/api/motion-library');setEffects(data.effects);setBuiltins(data.builtins||[]);}
   useEffect(()=>{void refresh().catch(e=>setError(e.message));},[]);
@@ -18,12 +19,12 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
     let stopped=false;
     const timer=setInterval(async()=>{try{
       const data=await request('/api/motion-library');if(stopped)return;setEffects(data.effects);
-      if(selected?.status==='building'){const d=await request(`/api/motion-library/${selected.id}`);if(!stopped)setSelected(d.effect);}
+      if(selected?.status==='building'){const d=await request(`/api/motion-library/${selected.id}`);if(!stopped&&requestedEffect.current===selected.id)setSelected(d.effect);}
     }catch(e){if(!stopped)setError((e as Error).message);}},2500);
     return()=>{stopped=true;clearInterval(timer);};
   },[effects.some(e=>e.status==='building'),selected?.id,building]);
-  function create(){setSelected(null);setName('');setPrompt('');setFiles([]);setError('');setEditing(true);}
-  async function open(id:string){try{const d=await request(`/api/motion-library/${id}`);setSelected(d.effect);setName(d.effect.name);setPrompt('');setFiles([]);setError('');setEditing(true);}catch(e){setError((e as Error).message);}}
+  function create(){selection.current++;requestedEffect.current=undefined;setSelected(null);setName('');setPrompt('');setFiles([]);setError('');setEditing(true);}
+  async function open(id:string){const current=++selection.current;requestedEffect.current=id;setPending(true);try{const d=await request(`/api/motion-library/${id}`);if(current!==selection.current)return;setSelected(d.effect);setName(d.effect.name);setPrompt('');setFiles([]);setError('');setEditing(true);}catch(e){if(current===selection.current)setError((e as Error).message);}finally{if(current===selection.current)setPending(false);}}
   function choose(incoming:FileList|null){
     if(!incoming)return;
     const list=Array.from(incoming);
@@ -42,7 +43,7 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
       }
       setUploadStatus('正在提交动效需求');
       const data=await request(selected?`/api/motion-library/${selected.id}`:'/api/motion-library',{method:selected?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'generate',prompt,name,uploads})});
-      setSelected(data.effect);setFiles([]);setPrompt('');await refresh();
+      requestedEffect.current=data.effect.id;setSelected(data.effect);setFiles([]);setPrompt('');await refresh();
     }catch(e){setError((e as Error).message);}finally{setPending(false);setUploadStatus('');}
   }
   async function save(){if(!selected)return;setPending(true);setError('');try{const d=await request(`/api/motion-library/${selected.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save'})});setSelected(d.effect);await refresh();}catch(e){setError((e as Error).message);}finally{setPending(false);}}
@@ -50,8 +51,8 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
     <div className="effect-library-heading"><div><h2><FolderOpen size={19}/>动效库</h2><p>内置模板直接使用，个人创作的动效仅当前账号可见。</p></div><button className="motion-button secondary" onClick={create} disabled={pending}><Plus size={16}/>创作动效</button></div>
     {error&&<div className="motion-alert" role="alert">{error}</div>}
     {!!builtins.length&&<div className="effect-builtin-section"><h3>内置固定模板 <small>替换文案即可使用</small></h3><div className="effect-grid effect-builtin-grid">{builtins.map(effect=><article key={effect.id} className={`effect-card ${applied?.id===effect.id?'selected':''}`}>
-      <video src={effect.previewUrl} poster={`/motion-templates/${effect.id}-v1.jpg`} controls muted playsInline preload="metadata" aria-label={`${effect.name}预览`}/>
-      <div className="effect-card-body"><div><h3>{effect.name}</h3><span>内置 · 固定</span></div><p>{effect.message}</p><div className="effect-card-actions"><span className="motion-help">应用后编辑当前片段的文案</span><button className="motion-button secondary" disabled={disabled} onClick={()=>onApply(effect)}>{applied?.id===effect.id?'已应用':'应用到成片'}<ArrowUpRight size={14}/></button></div></div>
+      <video src={effect.previewUrl} poster={`/motion-templates/${effect.id}-v${effect.revision}.jpg`} controls muted playsInline preload="metadata" aria-label={`${effect.name}预览`}/>
+      <div className="effect-card-body"><div><h3>{effect.name}</h3><span>内置 · 固定</span></div><p>{effect.message}</p><div className="effect-card-actions"><span className="motion-help">{effect.semantics?.required?'应用后按口播自动编排图解':'应用后编辑当前片段的文案'}</span><button className="motion-button secondary" disabled={disabled} onClick={()=>onApply(effect)}>{applied?.id===effect.id&&applied.revision===effect.revision?'已应用':'应用到成片'}<ArrowUpRight size={14}/></button></div></div>
     </article>)}</div></div>}
     <h3 className="effect-personal-heading">我的动效 <small>仅当前账号可见</small></h3>
     {editing&&<div ref={editor} className="motion-panel effect-editor">
@@ -70,12 +71,13 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
       </div><div className="effect-inspector"><span className="effect-preview-title">动效预览</span>
         {selected?.previewUrl?<video key={selected.previewUrl} src={`${selected.previewUrl}#t=1`} controls playsInline preload="auto"/>:<div className="effect-empty-preview"><Sparkles size={28}/><span>你的想法，会在这里动起来</span></div>}
         <p className="motion-help">使用示例文案展示节奏；应用到成片时会替换为当前总结。</p>
+        {selected?.semantics&&<p className="motion-help" role="status">{selected.semantics.required?'按内容编排图解':'直接套用，无需额外内容分析'}：{selected.semantics.reason}</p>}
         {!!selected?.revision&&<div className="effect-save-actions"><button className="motion-button secondary" disabled={busy||selected.saved} onClick={save}><Save size={15}/>{selected.saved?'已保存到动效库':'保存到动效库'}</button><button className="motion-button primary" disabled={busy||!selected.saved||disabled} onClick={()=>onApply(selected)}><ArrowUpRight size={15}/>应用到成片</button></div>}
       </div></div>
     </div>}
     <div className="effect-grid">{effects.map(effect=><article key={effect.id} className={`effect-card ${applied?.id===effect.id?'selected':''}`}>
       {effect.previewUrl?<video src={`${effect.previewUrl}#t=1`} muted playsInline preload="metadata"/>:<div className="effect-card-placeholder"><Sparkles size={24}/>{effect.status==='building'?'制作中':'等待生成'}</div>}
-      <div className="effect-card-body"><div><h3>{effect.name}</h3><span>{effect.status==='building'?'制作中':effect.status==='failed'?'需重试':effect.saved?'已保存':'草稿'}</span></div><p>{effect.messages.length?effect.messages[0].content:effect.assets.length?`${effect.assets.length} 个参考素材`:'可复用的总结动效'}</p>
+      <div className="effect-card-body"><div><h3>{effect.name}</h3><span>{effect.status==='building'?'制作中':effect.status==='failed'?'需重试':effect.saved?'已保存':'草稿'}</span></div><p>{effect.semantics?effect.semantics.required?'按口播内容自动编排图解':'直接套用，无需额外内容分析':effect.messages.length?effect.messages[0].content:effect.assets.length?`${effect.assets.length} 个参考素材`:'可复用的总结动效'}</p>
         <div className="effect-card-actions"><button className="motion-text-button" disabled={pending} onClick={()=>open(effect.id)}>继续编辑</button><button className="motion-button secondary" disabled={disabled||effect.status==='building'||!effect.saved||!effect.revision} onClick={()=>onApply(effect)}>{applied?.id===effect.id&&applied.revision===effect.revision?'已应用':'应用到成片'}<ArrowUpRight size={14}/></button></div>
       </div></article>)}</div>
     {!effects.length&&!editing&&<button className="effect-empty" onClick={create}><Sparkles size={25}/><strong>创作第一个专属动效</strong><span>从一句描述开始，也可以加入图片或视频素材。</span><span className="effect-empty-link">开始创作 <Plus size={13}/></span></button>}

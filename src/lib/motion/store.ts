@@ -1,3 +1,4 @@
+import type {SemanticCache} from '../motion-library/semantics';
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +8,7 @@ import type { MotionProject } from "./contract";
 import { DEFAULT_MOTION_CROP } from "./contract";
 
 export interface StoredMotionProject extends Omit<MotionProject, "sourceUrl" | "finalUrl"> {
+  semanticCache?: SemanticCache;
   userId?: string; source: string; output?: string;
 }
 const state = globalThis as typeof globalThis & { motionStore?: { loaded: boolean; projects: StoredMotionProject[]; queue: Promise<unknown>; active: Set<string> } };
