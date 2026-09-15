@@ -12,6 +12,7 @@ import {validateEffectRef,validateEffectBackground} from '../src/lib/motion-libr
 import {publicEffect} from '../src/lib/motion-library/store.ts';
 import {MotionInputError,validateMotionEdit} from '../src/lib/motion/contract.ts';
 import {probeEffectAsset} from '../src/lib/motion-library/pipeline.ts';
+import {getBuiltinEffect,publicBuiltinEffect,listBuiltinEffects} from '../src/lib/motion-library/builtins.ts';
 const id='effect_11111111-1111-4111-8111-111111111111';
 const source="import React from 'react'; import {interpolate} from 'remotion'; import {Asset} from '@motion'; export default function Effect({frame,scene,assets}) {const opacity=interpolate(frame,[0,15],[0,1]);return <div style={{opacity}}><Asset asset={assets[0]}/><span>{scene.headline}</span></div>}";
 test('still image metadata works without a video duration',async()=>{
@@ -61,7 +62,7 @@ test('library edit and apply enforce session, ownership, saved versions and uplo
     '@/lib/server/generation-limit':{acquireGenerationSlot:()=>()=>{releaseCount++},GenerationLimitError:class extends Error{}},
     '@/lib/main-app-billing':{isExternallyBilledUser:()=>true},'@/lib/motion/contract':{MotionInputError},'@/lib/server/safe-log':{logServerError:()=>{}},
     './store':{EffectStore:{get:async()=>structuredClone(row),claim:()=>{if(locked)return false;locked=true;return true;},release:()=>{locked=false},save:async r=>{saved++;row=r;return r;}},publicEffect:r=>({id:r.id,status:r.status,saved:r.saved})},
-    './pipeline':{runLibraryEffect:async()=>{runs++}},
+    './pipeline':{runLibraryEffect:async()=>{runs++}},'./builtins':{getBuiltinEffect},
   };
   const service=load('../src/lib/motion-library/service.ts',deps);
   const previous={};for(const k of ['MOTION_AGENT_API_KEY','MOTION_AGENT_BASE_URL','MOTION_AGENT_MODEL']){previous[k]=process.env[k];process.env[k]='test';}
@@ -72,6 +73,12 @@ test('library edit and apply enforce session, ownership, saved versions and uplo
     access.isAdmin=true;assert.equal((await patch({action:'save'})).status,404);
     assert.equal((await patch({action:'generate',prompt:'cross-account'})).status,404);
     await assert.rejects(service.ownedEffectVersion({id,revision:1},access),MotionInputError);
+    for(const builtin of listBuiltinEffects()){
+      const resolved=await service.ownedEffectVersion({id:builtin.id,revision:1},access);assert.equal(resolved.row.id,builtin.id);assert.ok(resolved.version.compiled);
+      await assert.rejects(service.ownedEffectVersion({id:builtin.id,revision:2},access),MotionInputError);
+      for(const action of ['save','generate'])assert.equal((await service.editLibrary(new NextRequest('http://localhost/api/motion-library/'+builtin.id,{method:'PATCH',body:JSON.stringify({action,prompt:'change fixed template'})}),builtin.id)).status,400);
+    }
+    assert.equal(saved,0);assert.equal(runs,0);
     access.userId='owner';await assert.rejects(service.ownedEffectVersion({id,revision:99},access),MotionInputError);
     row.saved=false;await assert.rejects(service.ownedEffectVersion({id,revision:1},access),MotionInputError);row.saved=true;
     assert.equal((await patch({action:'generate',prompt:'test',uploads:[{kind:'image',key:'key-other'}]})).status,400);
@@ -106,6 +113,7 @@ test('library list and revision detail stay private for owners, admins and local
   const rows=[{id,userId:'owner',revision:1,versions:[{revision:1}]},{id:'effect_other',userId:'other',revision:1,versions:[{revision:1}]},{id:'effect_local',revision:1,versions:[{revision:1}]}];
   const deps={
     '@/lib/motion-library/access':{canAccessEffect},
+    '@/lib/motion-library/builtins':{listBuiltinEffects,publicBuiltinEffect},
     '@/lib/access-control':{resolveAccessContext:async()=>access,canAccessTask,unauthorizedResponse:()=>NextResponse.json({},{status:401}),taskNotFoundResponse:()=>NextResponse.json({},{status:404})},
     '@/lib/motion-library/store':{EffectStore:{list:async()=>rows,get:async id=>rows.find(r=>r.id===id)},publicEffect:r=>({id:r.id})},
     '@/lib/motion-library/service':{editLibrary:()=>{throw new Error('Unexpected write');}},
@@ -117,10 +125,25 @@ test('library list and revision detail stay private for owners, admins and local
   for(const [userId,isAdmin,expected] of [['owner',false,id],['other',false,'effect_other'],['other',true,'effect_other'],['admin',true,null]]){
     access={isolated:true,userId,isAdmin};
     const response=await list.GET(req);assert.equal(response.headers.get('Cache-Control'),'no-store');
-    assert.deepEqual((await response.json()).effects.map(r=>r.id),expected?[expected]:[]);
+    const body=await response.json();assert.deepEqual(body.effects.map(r=>r.id),expected?[expected]:[]);
+    assert.deepEqual(body.builtins.map(r=>r.id),['builtin_green_text','builtin_green_diagram']);
+    for(const builtin of body.builtins){assert.equal(builtin.builtin,true);assert.equal(builtin.template,undefined);assert.equal((await get(builtin.id)).status,200);}
     for(const r of rows)assert.equal((await get(r.id)).status,r.userId===userId?200:404);
   }
   access={isolated:false,userId:null,isAdmin:true};
   assert.deepEqual((await (await list.GET(req)).json()).effects.map(r=>r.id),['effect_local']);
   assert.equal((await get(id)).status,404);assert.equal((await get('effect_local')).status,200);
+});
+
+test('fixed templates retain source parity, immutable revisions and diagram settings without AI calls',()=>{
+  for(const [id,name] of [['builtin_green_text','GreenText'],['builtin_green_diagram','GreenDiagram']]){
+    const ref={id,revision:1};assert.deepEqual(validateEffectRef(ref),ref);
+    assert.throws(()=>validateEffectRef({...ref,revision:2}));
+    const fixed=getBuiltinEffect(id);assert.equal(fixed.versions[0].compiled,compileEffect(fs.readFileSync(new URL(`../src/remotion/templates/${name}.tsx`,import.meta.url),'utf8')));
+    assert.deepEqual(fixed.assets,[]);assert.equal(publicBuiltinEffect(id,true).template.backgroundColor,'#194b36');
+  }
+  assert.equal(getBuiltinEffect('builtin_arbitrary'),undefined);assert.throws(()=>validateEffectRef({id:'builtin_arbitrary',revision:1}));
+  const edit={title:'固定标题',subtitle:'固定副标题',fit:'cover',effect:{id:'builtin_green_diagram',revision:1},captions:[{start:0,end:6,text:'企业知识库帮助新人上手'}],scenes:[{start:0,end:6,headline:'企业知识库',line1:'数字员工',line2:'新人上手',highlight:'上手'}]};
+  for(const diagramLayout of ['flow','branch','merge','equation'])assert.equal(validateMotionEdit({...edit,scenes:[{...edit.scenes[0],diagramLayout}]},6,true).scenes[0].diagramLayout,diagramLayout);
+  assert.throws(()=>validateMotionEdit({...edit,scenes:[{...edit.scenes[0],diagramLayout:'script'}]},6,true),/图解结构/);
 });

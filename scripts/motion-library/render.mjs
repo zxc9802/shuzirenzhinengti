@@ -3,7 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import {ensureBrowser, openBrowser, selectComposition, renderMedia} from '@remotion/renderer';
-export async function renderEffectVideo({template, output, source, edit, duration=6, onProgress=()=>{}}) {
+export async function renderEffectVideo({template, output, source, edit, duration=6, previewScenes, onProgress=()=>{}}) {
   const token=crypto.randomBytes(24).toString('hex'), files=new Map();
   const bundle=path.resolve('.motion-bundle');
   if (!fs.existsSync(path.join(bundle,'index.html'))) throw new Error('请先运行 npm run motion:bundle');
@@ -47,7 +47,7 @@ export async function renderEffectVideo({template, output, source, edit, duratio
       return page;
     };
     const resolved={...template,assets:template.assets.map(a=>({...a,url:`${origin}/${token}/${a.id}`}))};
-    const inputProps=source?{...edit,duration,sourceUrl:`${origin}/${token}/source`,effectTemplate:resolved}:{template:resolved};
+    const inputProps=source?{...edit,duration,sourceUrl:`${origin}/${token}/source`,effectTemplate:resolved}:{template:resolved,...(previewScenes?{scenes:previewScenes}:{})};
     const composition=await selectComposition({serveUrl:origin,id:source?'DigitalHumanMotion':'LibraryEffect',inputProps,puppeteerInstance:browser,logLevel:'error'});
     await renderMedia({composition,serveUrl:origin,inputProps,outputLocation:output,codec:'h264',crf:20,pixelFormat:'yuv420p',colorSpace:'bt709',muted:true,puppeteerInstance:browser,concurrency:1,logLevel:'error',timeoutInMilliseconds:20000,onProgress:({progress})=>onProgress(Math.floor(progress*100))});
   } finally {if(browser)await browser.close({silent:true});server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

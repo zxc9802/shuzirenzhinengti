@@ -11,7 +11,10 @@ import {logServerError} from '@/lib/server/safe-log';
 import {EffectStore,publicEffect,type StoredAsset,type StoredEffect} from './store';
 import {runLibraryEffect} from './pipeline';
 import type {EffectRef} from './contract';
+import {getBuiltinEffect} from './builtins';
 export async function ownedEffectVersion(ref:EffectRef, access:AccessContext) {
+  const builtin=getBuiltinEffect(ref.id);
+  if(builtin&&(!access.isolated||access.userId)&&ref.revision===builtin.revision)return {row:builtin,version:builtin.versions[0]};
   const row=await EffectStore.get(ref.id),version=row?.versions.find(v=>v.revision===ref.revision);
   if(!row||!canAccessEffect(access,row)||!row.saved||!version)throw new MotionInputError('所选动效不可用，请从自己的动效库重新选择');
   return {row,version};
@@ -20,6 +23,7 @@ export async function editLibrary(req:NextRequest,id?:string) {
   const access=await resolveAccessContext(req);if(access.isolated&&!access.userId)return unauthorizedResponse();
   let release:(()=>void)|undefined,claimed:string|undefined;
   try {
+    if(id&&getBuiltinEffect(id))return NextResponse.json({error:'内置固定模板无需生成或保存，请直接应用到成片'},{status:400});
     let row=id?await EffectStore.get(id):undefined;
     if(id&&(!row||!canAccessEffect(access,row)))return taskNotFoundResponse();
     if(row&&(row.status==='building'||!EffectStore.claim(row.id)))return NextResponse.json({error:'动效正在生成，请稍候'},{status:409});

@@ -5,11 +5,12 @@ import {uploadMediaFile} from '@/lib/client-media-upload';
 import type {EffectRef,LibraryEffect} from '@/lib/motion-library/contract';
 async function request(url:string,init?:RequestInit){const r=await fetch(url,{...init,cache:'no-store'}),d=await r.json();if(!r.ok)throw new Error(d.error||'操作失败，请重试');return d;}
 export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effect:LibraryEffect)=>void;applied?:EffectRef;disabled:boolean}) {
+  const [builtins,setBuiltins]=useState<LibraryEffect[]>([]);
   const [effects,setEffects]=useState<LibraryEffect[]>([]),[selected,setSelected]=useState<LibraryEffect|null>(null),[editing,setEditing]=useState(false);
   const [prompt,setPrompt]=useState(''),[name,setName]=useState(''),[files,setFiles]=useState<File[]>([]),[pending,setPending]=useState(false),[error,setError]=useState(''),[uploadStatus,setUploadStatus]=useState('');
   const input=useRef<HTMLInputElement>(null),editor=useRef<HTMLDivElement>(null);
   const building=selected?.status==='building',busy=pending||building;
-  async function refresh(){setEffects((await request('/api/motion-library')).effects);}
+  async function refresh(){const data=await request('/api/motion-library');setEffects(data.effects);setBuiltins(data.builtins||[]);}
   useEffect(()=>{void refresh().catch(e=>setError(e.message));},[]);
   useEffect(()=>{if(editing)editor.current?.scrollIntoView({behavior:'smooth',block:'start'});},[editing,selected?.id]);
   useEffect(()=>{
@@ -46,8 +47,13 @@ export default function MotionLibrary({onApply,applied,disabled}: {onApply:(effe
   }
   async function save(){if(!selected)return;setPending(true);setError('');try{const d=await request(`/api/motion-library/${selected.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save'})});setSelected(d.effect);await refresh();}catch(e){setError((e as Error).message);}finally{setPending(false);}}
   return <section id="motion-library" className="effect-library">
-    <div className="effect-library-heading"><div><h2><FolderOpen size={19}/>动效库</h2><p>仅当前账号可见。描述你的想法，创作可复用的专属动效。</p></div><button className="motion-button secondary" onClick={create} disabled={pending}><Plus size={16}/>创作动效</button></div>
+    <div className="effect-library-heading"><div><h2><FolderOpen size={19}/>动效库</h2><p>内置模板直接使用，个人创作的动效仅当前账号可见。</p></div><button className="motion-button secondary" onClick={create} disabled={pending}><Plus size={16}/>创作动效</button></div>
     {error&&<div className="motion-alert" role="alert">{error}</div>}
+    {!!builtins.length&&<div className="effect-builtin-section"><h3>内置固定模板 <small>替换文案即可使用</small></h3><div className="effect-grid effect-builtin-grid">{builtins.map(effect=><article key={effect.id} className={`effect-card ${applied?.id===effect.id?'selected':''}`}>
+      <video src={effect.previewUrl} poster={`/motion-templates/${effect.id}-v1.jpg`} controls muted playsInline preload="metadata" aria-label={`${effect.name}预览`}/>
+      <div className="effect-card-body"><div><h3>{effect.name}</h3><span>内置 · 固定</span></div><p>{effect.message}</p><div className="effect-card-actions"><span className="motion-help">应用后编辑当前片段的文案</span><button className="motion-button secondary" disabled={disabled} onClick={()=>onApply(effect)}>{applied?.id===effect.id?'已应用':'应用到成片'}<ArrowUpRight size={14}/></button></div></div>
+    </article>)}</div></div>}
+    <h3 className="effect-personal-heading">我的动效 <small>仅当前账号可见</small></h3>
     {editing&&<div ref={editor} className="motion-panel effect-editor">
       <div className="effect-editor-heading"><h3>{selected?selected.name:'创作我的动效'}</h3><button type="button" className="motion-text-button" aria-label="收起动效编辑器" onClick={()=>setEditing(false)}><X size={18}/></button></div>
       <div className="effect-editor-grid"><div className="effect-conversation">

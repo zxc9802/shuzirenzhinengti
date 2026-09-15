@@ -38,8 +38,10 @@ export async function runMotion(id: string, operation: "analyze" | "render") {
       let effectTemplate: import("../motion-library/contract").EffectTemplate | undefined;
       if (edit.effect) {
         const {EffectStore} = await import("../motion-library/store");
-        const effect = await EffectStore.get(edit.effect.id), version = effect?.versions.find(v => v.revision === edit.effect!.revision);
-        if (!effect || effect.userId !== project!.userId || !effect.saved || !version) throw new MotionInputError("所选动效版本不可用，请重新选择");
+        const {getBuiltinEffect} = await import("../motion-library/builtins");
+        const builtin = getBuiltinEffect(edit.effect.id);
+        const effect = builtin || await EffectStore.get(edit.effect.id), version = effect?.versions.find(v => v.revision === edit.effect!.revision);
+        if (!effect || (!builtin && effect.userId !== project!.userId) || !effect.saved || !version) throw new MotionInputError("所选动效版本不可用，请重新选择");
         const assets = [];
         for (const asset of version.assets) {
           const local = path.join(motionDirectory(id), asset.id + (asset.kind === "image" ? ".jpg" : ".mp4"));
