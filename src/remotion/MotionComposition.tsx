@@ -3,6 +3,7 @@ import { AbsoluteFill, Sequence, OffthreadVideo, Video, getRemotionEnvironment, 
 import type { MotionEdit, MotionScene } from "../lib/motion/contract";
 import { MOTION_LAYOUT } from "../lib/motion/contract";
 import { motionVideoStyle } from "../lib/motion/crop";
+import { MotionCaptions } from "./MotionCaptions";
 
 import type {EffectTemplate} from "../lib/motion-library/contract";
 import {EffectRuntime} from "./EffectRuntime";
@@ -43,7 +44,6 @@ function Summary({scene, frame, fps}: {scene: MotionScene; frame: number; fps: n
 }
 export function MotionComposition(props: MotionCompositionProps) {
   const frame = useCurrentFrame(); const {fps} = useVideoConfig(); const time = frame / fps;
-  const caption = props.captions.find(c => time >= c.start && time < c.end);
   const scene = props.scenes.find(s => time >= s.start && time < s.end);
   const videoStyle = motionVideoStyle(props.fit, props.crop);
   return <AbsoluteFill style={{fontFamily: font, background: "#102e22", color: "white"}}>
@@ -51,7 +51,7 @@ export function MotionComposition(props: MotionCompositionProps) {
     <div style={{height: MOTION_LAYOUT.speaker, position: "relative", overflow: "hidden", background: "#101511"}}>
       {props.sourceUrl && (getRemotionEnvironment().isRendering && !props.effectTemplate ? <OffthreadVideo src={props.sourceUrl} muted style={videoStyle}/> : <Video src={props.sourceUrl} muted={getRemotionEnvironment().isRendering} style={videoStyle}/>)}
       {!props.sourceUrl && <AbsoluteFill style={{alignItems: "center", justifyContent: "center", color: "#6d8378", fontSize: 38}}>上传最终剪辑版后预览</AbsoluteFill>}
-      {caption && <div style={{position: "absolute", bottom: 16, left: 50, right: 50, textAlign: "center"}}><span style={{display: "inline-block", maxWidth: "100%", padding: "2px 12px 5px", borderRadius: 5, background: "rgba(9, 54, 31, 0.94)", color: "white", fontWeight: 800, fontSize: caption.text.length > 36 ? 38 : 48, lineHeight: 1.3, overflowWrap: "anywhere"}}>{caption.text}</span></div>}
+      <MotionCaptions captions={props.captions} time={time}/>
     </div>
     {props.effectTemplate ? <div style={{height:MOTION_LAYOUT.bottom,position:"relative",overflow:"hidden",background:"#10121a"}}>
       {scene && (getRemotionEnvironment().isRendering ? <Sequence from={Math.round(scene.start*fps)} layout="none"><EffectRuntime template={props.effectTemplate} scene={scene} frame={frame-Math.round(scene.start*fps)} fps={fps}/></Sequence> : <SandboxEffect template={props.effectTemplate} scene={scene} frame={frame-Math.round(scene.start*fps)} fps={fps}/>)}
