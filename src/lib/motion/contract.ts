@@ -2,6 +2,7 @@ import {validateVisualPlan, type VisualPlan} from '../motion-library/visual';
 import {validateEffectRef, type EffectRef} from "../motion-library/contract";
 export type MotionStatus = "analyzing" | "ready" | "rendering" | "completed" | "failed";
 export interface MotionCaption { start: number; end: number; text: string }
+export interface MotionTaskSource { taskId: string; name: string; duration: number; sourceUrl: string }
 export interface MotionScene {
   visual?: VisualPlan;
   start: number; end: number; headline: string; line1: string; line2: string; highlight: string;

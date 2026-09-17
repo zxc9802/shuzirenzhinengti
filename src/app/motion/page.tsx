@@ -3,7 +3,7 @@ import React, {useEffect, useRef, useState} from "react";
 import dynamic from "next/dynamic";
 import {Upload, Sparkles, Film, Download, Plus, Trash2, Check, Loader2, RotateCcw, Save, FileText, History, X} from "lucide-react";
 import {uploadMediaFile} from "@/lib/client-media-upload";
-import {type MotionProject, type MotionCaption, type MotionScene, type MotionEdit, DEFAULT_MOTION_CROP, parseSrt, validateMotionEdit} from "@/lib/motion/contract";
+import {type MotionProject, type MotionCaption, type MotionScene, type MotionEdit, type MotionTaskSource, DEFAULT_MOTION_CROP, parseSrt, validateMotionEdit} from "@/lib/motion/contract";
 import MotionLibrary from "@/components/MotionLibrary";
 import type {EffectTemplate, LibraryEffect} from "@/lib/motion-library/contract";
 import MotionCropEditor from "@/components/MotionCropEditor";
@@ -27,6 +27,7 @@ export default function MotionPage() {
   const [project, setProject] = useState<MotionProject | null>(null);
   const [edit, setEdit] = useState<MotionEdit>(empty);
   const [file, setFile] = useState<File | null>(null);
+  const [taskVideo, setTaskVideo] = useState<MotionTaskSource | null>(null);
   const [localUrl, setLocalUrl] = useState("");
   const [sourceDuration, setSourceDuration] = useState(0);
   const [uploadKey, setUploadKey] = useState("");
@@ -41,6 +42,19 @@ export default function MotionPage() {
   const busy = pending || busyStatus(project);
   const refreshList = async () => {try {setProjects((await api("/api/motion")).projects);} catch (err) {setError((err as Error).message);}};
   useEffect(() => {void refreshList();}, []);
+  useEffect(() => {
+    const taskId = new URLSearchParams(window.location.search).get("fromTask");
+    if (!taskId) return;
+    let stopped = false;
+    setPending(true); setNotice("正在载入制作台成片");
+    void api(`/api/motion/from-task/${encodeURIComponent(taskId)}`).then(data => {
+      if (stopped) return;
+      setTaskVideo(data.video); setSourceDuration(data.video.duration);
+      setNotice("已带入制作台成片，可调整裁剪并填写标题后开始整理");
+    }).catch(err => {if (!stopped) {setError(err.message); setNotice("");}})
+      .finally(() => {if (!stopped) setPending(false);});
+    return () => {stopped = true;};
+  }, []);
   useEffect(() => {
     if (error || project?.error) {
       errorAlert.current?.scrollIntoView({block: "center", behavior: "smooth"});
@@ -62,24 +76,38 @@ export default function MotionPage() {
     return () => {stopped = true; clearInterval(timer);};
   }, [project?.id, project?.status]);
   function change(update: Partial<MotionEdit>) {setEdit(current => ({...current, ...update})); setDirty(true); setNotice("");}
-  function select(p: MotionProject) {setProject(p); setEdit(p); setFile(null); setUploadKey(""); setDirty(false); setError(""); setNotice("");}
-  function newProject() {setProject(null); setEdit(empty); setFile(null); setUploadKey(""); setDirty(false); setSourceDuration(0); setError(""); setNotice("");}
+  function clearTaskVideo() {
+    setTaskVideo(null);
+    const url = new URL(window.location.href); url.searchParams.delete("fromTask");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+  function select(p: MotionProject) {clearTaskVideo(); setProject(p); setEdit(p); setFile(null); setUploadKey(""); setDirty(false); setError(""); setNotice("");}
+  function newProject() {clearTaskVideo(); setProject(null); setEdit(empty); setFile(null); setUploadKey(""); setDirty(false); setSourceDuration(0); setError(""); setNotice("");}
   function chooseFile(next?: File) {
     if (!next) return;
     if (next.size > 500 * 1024 * 1024 || !/\.(mp4|mov|m4v)$/i.test(next.name)) {setError("请上传不超过 500 MB 的 MP4 或 MOV 视频"); return;}
-    setFile(next); setUploadKey(""); setSourceDuration(0); setError("");
+    clearTaskVideo(); setFile(next); setUploadKey(""); setSourceDuration(0); setError("");
     change({crop: {...DEFAULT_MOTION_CROP}});
   }
   async function create() {
-    if (!file) {setError("请先上传最终剪辑版"); return;}
+    if (!file && !taskVideo) {setError("请先上传最终剪辑版"); return;}
     setPending(true); setError("");
     try {
       const validated = validateMotionEdit(edit, sourceDuration || 600);
       let key = uploadKey;
-      if (!key) {setNotice("正在上传最终剪辑版"); key = (await uploadMediaFile(file, file.name, "videos", setUploadProgress)).uploadKey; setUploadKey(key);}
+      if (!key) {
+        if (taskVideo) {
+          setNotice("正在转入制作台成片");
+          key = (await api(`/api/motion/from-task/${encodeURIComponent(taskVideo.taskId)}`, {method: "POST"})).uploadKey;
+        } else if (file) {
+          setNotice("正在上传最终剪辑版");
+          key = (await uploadMediaFile(file, file.name, "videos", setUploadProgress)).uploadKey;
+        }
+        setUploadKey(key);
+      }
       setNotice("视频已上传，正在创建整理任务");
-      const data = await api("/api/motion", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({...validated, uploadKey: key, name: file.name})});
-      setProject(data.project); setEdit(data.project); setDirty(false); setNotice(""); void refreshList();
+      const data = await api("/api/motion", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({...validated, uploadKey: key, name: taskVideo?.name || file!.name})});
+      clearTaskVideo(); setProject(data.project); setEdit(data.project); setDirty(false); setNotice(""); void refreshList();
     } catch (err) {setError((err as Error).message); setNotice("");} finally {setPending(false);}
   }
   async function act(action: "save" | "analyze" | "render" | "prepare", currentEdit = edit) {
@@ -109,7 +137,7 @@ export default function MotionPage() {
     document.getElementById("motion-preview")?.scrollIntoView({behavior:"smooth",block:"center"});
   }
   const duration = project?.duration || sourceDuration || 10;
-  const preview = {...edit, effectTemplate, title: edit.title || "什么是超级员工？", subtitle: edit.subtitle || "给普通人配一个超级外挂", duration, sourceUrl: localUrl || project?.sourceUrl || ""};
+  const preview = {...edit, effectTemplate, title: edit.title || "什么是超级员工？", subtitle: edit.subtitle || "给普通人配一个超级外挂", duration, sourceUrl: localUrl || project?.sourceUrl || taskVideo?.sourceUrl || ""};
   const scenes = edit.scenes;
   const diagram = edit.effect?.id === 'builtin_green_diagram' && edit.effect.revision === 1;
   const updateCaption = (index: number, changes: Partial<MotionCaption>) => change({captions: edit.captions.map((c, i) => i === index ? {...c, ...changes} : c)});
@@ -124,8 +152,8 @@ export default function MotionPage() {
       <div className="motion-panel"><div className="motion-section-title"><span>01</span><h2>最终剪辑版</h2></div>
         {!project ? <><input ref={fileInput} type="file" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" hidden onChange={e => {chooseFile(e.target.files?.[0]); e.target.value = "";}}/>
           <button className="motion-upload" disabled={busy} onClick={() => fileInput.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault(); if (!busy) chooseFile(e.dataTransfer.files[0]);}}>
-            {file ? <Film size={28}/> : <Upload size={28}/>}<strong>{file ? file.name : "点击或拖入剪好的数字人视频"}</strong><span>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB · 点击可更换` : "MP4 / MOV · 最长 10 分钟 · 最大 500 MB"}</span>
-          </button>{localUrl && <video src={localUrl} preload="metadata" hidden onLoadedMetadata={e => {const d = e.currentTarget.duration; setSourceDuration(d); if (d > 600) setError("视频超过 10 分钟，请缩短后上传");}}/>}</> : <div className="motion-source"><Film size={22}/><div><strong>{project.name}</strong><span>{timeLabel(project.duration)} · {project.width || "—"} × {project.height || "—"} · 保留原声</span></div><span className="motion-status">{statusLabel[project.status]}</span></div>}
+            {file || taskVideo ? <Film size={28}/> : <Upload size={28}/>}<strong>{file?.name || taskVideo?.name || "点击或拖入剪好的数字人视频"}</strong><span>{taskVideo ? "来自制作台的数字人成片 · 点击可更换" : file ? `${(file.size / 1024 / 1024).toFixed(1)} MB · 点击可更换` : "MP4 / MOV · 最长 10 分钟 · 最大 500 MB"}</span>
+          </button>{(localUrl || taskVideo?.sourceUrl) && <video src={localUrl || taskVideo?.sourceUrl} preload="metadata" hidden onLoadedMetadata={e => {const d = e.currentTarget.duration; setSourceDuration(d); if (d > 600) setError("视频超过 10 分钟，请缩短后上传");}}/>}</> : <div className="motion-source"><Film size={22}/><div><strong>{project.name}</strong><span>{timeLabel(project.duration)} · {project.width || "—"} × {project.height || "—"} · 保留原声</span></div><span className="motion-status">{statusLabel[project.status]}</span></div>}
         <div className="motion-fit"><label htmlFor="motion-fit">人物画面</label><select id="motion-fit" value={edit.fit} disabled={busy} onChange={e => change({fit: e.target.value as MotionEdit["fit"]})}><option value="cover">手动裁剪（铺满中间区域）</option><option value="contain">保留完整画面（可能留边）</option></select></div>
         {preview.sourceUrl && edit.fit === "cover" && <MotionCropEditor key={preview.sourceUrl} sourceUrl={preview.sourceUrl} crop={edit.crop ?? DEFAULT_MOTION_CROP} disabled={Boolean(busy)} onChange={crop => change({crop})}/>}
       </div>
@@ -135,7 +163,7 @@ export default function MotionPage() {
       </div>
       <div className="motion-panel"><div className="motion-effect-choice"><span>底部动效：{edit.effect ? effectName || "正在加载…" : "默认绿金总结"}</span><div>{edit.effect&&<button className="motion-text-button" disabled={busy} onClick={()=>change({effect:undefined})}>恢复默认</button>}<a href="#motion-library" className="motion-text-button">从动效库选择</a></div></div><div className="motion-section-title"><span>03</span><h2>字幕与底部总结</h2></div>
         <input ref={srtInput} type="file" accept=".srt" hidden onChange={e => {void importSrt(e.target.files?.[0]); e.target.value = "";}}/>
-        {!project ? <div className="motion-analysis-intro"><FileText size={24}/><p>自动识别口播字幕，把相邻一两句话整理为一张总结卡片，按原视频时间切换。</p><button className="motion-text-button" disabled={busy} onClick={() => srtInput.current?.click()}>已有字幕？导入 SRT{edit.captions.length ? `（已导入 ${edit.captions.length} 条）` : ""}</button>{feedback}<button className="motion-button primary" disabled={busy || !file || !edit.title.trim() || !edit.subtitle.trim() || sourceDuration > 600} onClick={create}>{busy ? <Loader2 className="motion-spin" size={18}/> : <Sparkles size={18}/>} {pending ? "正在上传并整理…" : "上传并自动整理"}</button></div> : <>
+        {!project ? <div className="motion-analysis-intro"><FileText size={24}/><p>自动识别口播字幕，把相邻一两句话整理为一张总结卡片，按原视频时间切换。</p><button className="motion-text-button" disabled={busy} onClick={() => srtInput.current?.click()}>已有字幕？导入 SRT{edit.captions.length ? `（已导入 ${edit.captions.length} 条）` : ""}</button>{feedback}<button className="motion-button primary" disabled={busy || (!file && !taskVideo) || !edit.title.trim() || !edit.subtitle.trim() || sourceDuration > 600} onClick={create}>{busy ? <Loader2 className="motion-spin" size={18}/> : <Sparkles size={18}/>} {pending ? "正在准备并整理…" : taskVideo ? "开始自动整理" : "上传并自动整理"}</button></div> : <>
           {busyStatus(project) && <div className="motion-progress" role="status"><div><Loader2 className="motion-spin" size={17}/>{project.message}<strong>{project.progress}%</strong></div><progress value={project.progress} max={100}/><small>任务在后台继续，刷新页面后可从最近任务恢复。</small></div>}
           <div className="motion-tabs"><button className={tab === "scenes" ? "selected" : ""} onClick={() => setTab("scenes")}>底部总结 <span>{scenes.length}</span></button><button className={tab === "captions" ? "selected" : ""} onClick={() => setTab("captions")}>口播字幕 <span>{edit.captions.length}</span></button><button className="motion-import" disabled={busy} onClick={() => srtInput.current?.click()}>导入 SRT</button></div>
           <p className="motion-help">{tab === "scenes" ? diagram ? "每段口播对应一张图解，可选流程、分支、汇总或公式。三个文案依次对应图中节点，使用简短概念更清晰；高亮词需出现在第二或第三个节点中。" : "每张卡片对应一段口播，最多一个短标题、两行总结。高亮词需出现在正文里。" : "在这里校对完整原话和时间。成片自动去掉标点，优先按停顿和完整词语显示短句，不按固定字数截断；已有字幕的源视频建议先导出无字幕版本，避免叠字。"}</p>
@@ -148,7 +176,7 @@ export default function MotionPage() {
       </div>
     </section><aside id="motion-preview" className="motion-preview-column"><div className="motion-preview-sticky"><div className="motion-preview-label"><span className="motion-live-dot"/>{project?.status === "completed" && !dirty ? "已生成成片" : "成片预览"}<small>9:16 · 1080P</small></div>
       {project?.status === "completed" && project.finalUrl && !dirty ? <video className="motion-final" src={project.finalUrl} controls playsInline preload="metadata"/> : <MotionPreview {...preview}/>}
-      <p className="motion-preview-note">{!file && !project ? "示例标题仅用于展示，填写左侧两行文字后生成。" : "标题区 24% · 人物区 48% · 总结区 28%"}</p>
+      <p className="motion-preview-note">{!file && !project && !taskVideo ? "示例标题仅用于展示，填写左侧两行文字后生成。" : "标题区 24% · 人物区 48% · 总结区 28%"}</p>
       {project && <button className="motion-button primary motion-render" disabled={busy || !edit.captions.length || !edit.scenes.length} onClick={() => act("render")}>{busy ? <Loader2 className="motion-spin" size={17}/> : <Film size={17}/>}生成动效成片</button>}
       {project?.finalUrl && !dirty && <a className="motion-button download" href={`${project.finalUrl}&download=1`}><Download size={17}/>下载 MP4 成片</a>}
       {project?.status === "completed" && !dirty && <p className="motion-check"><Check size={14}/>原视频声音保留，未重新配音</p>}

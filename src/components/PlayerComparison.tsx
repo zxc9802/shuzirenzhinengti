@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState } from "react";
+import Link from "next/link";
 import {
   Play,
   Pause,
@@ -11,6 +12,7 @@ import {
   Layers,
   CheckCircle2,
   Share2,
+  Sparkles,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 
@@ -219,6 +221,15 @@ export default function PlayerComparison({
 
         {/* Download Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {finalVideoUrl && (
+            <Link
+              href={`/motion?fromTask=${encodeURIComponent(taskId)}`}
+              className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-sm active:scale-[0.98]"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              添加动效
+            </Link>
+          )}
           {finalVideoUrl && (
             <a
               href={`/api/tasks/${taskId}/download/final.mp4`}
