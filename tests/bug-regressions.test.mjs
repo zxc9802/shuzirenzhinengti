@@ -266,7 +266,7 @@ test("B10: restoring a task must retain a usable avatar when making the next tas
     globalThis.localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key) };
     const posts = [];
     globalThis.fetch = async (url, init) => {
-      if (String(url).startsWith("/api/sso/session")) return Response.json({ data: { user: { role: "admin" } } });
+      if (String(url).startsWith("/api/session")) return Response.json({ data: { user: { role: "admin" } } });
       if (String(url).startsWith("/api/avatars")) return Response.json({ avatars: [{ id: "new-avatar", name: "新形象", videoUrl: "/api/avatars/new-avatar/media?kind=video" }] });
       if (String(url).startsWith("/api/tasks/previous-task")) return Response.json({ task: {
         id: "previous-task", status: "completed", step: "done", progress: 100,
@@ -485,7 +485,7 @@ test("B10: refresh restores a known avatar and allows audio-only generation with
       const hooks = hookHarness(s);
       const stored = new Map([["active_lipsync_task_id", "previous-task"]]);
       globalThis.localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key) };
-      globalThis.fetch = async url => String(url).startsWith("/api/sso/session")
+      globalThis.fetch = async url => String(url).startsWith("/api/session")
         ? Response.json({ data: { user: { role: "admin" } } })
         : Response.json({ task: { id: "previous-task", status: "completed", inputs: { avatarId, scriptText: "测试" }, results: { originalVideoUrl: "/api/tasks/previous-task/media/original" }, logs: [] } });
       s.overrides.set("src/components/index.ts", {});

@@ -12,6 +12,8 @@ node_modules
 
 # Production
 /build
+/release/
+/data/
 
 # Media uploads and generated jobs (large binary files)
 /public/uploads/*
@@ -21,6 +23,7 @@ node_modules
 
 # Environment variables
 .env*.local
+.env.standalone
 .settings.json
 .heygen-mcp-auth.json
 .tasks.json

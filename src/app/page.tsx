@@ -63,7 +63,7 @@ export default function StudioPage() {
     // Resolve the current identity before loading any user-authored task content.
     const restoreTask = async () => {
       try {
-        const sessionResp = await fetch(`/api/sso/session?t=${Date.now()}`);
+        const sessionResp = await fetch(`/api/session?t=${Date.now()}`);
         if (!sessionResp.ok) {
           localStorage.removeItem(ACTIVE_TASK_KEY);
           setCurrentTask(null);

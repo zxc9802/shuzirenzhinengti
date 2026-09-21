@@ -12,7 +12,13 @@
     "mcp:stdio": "node scripts/heygen_mcp_server.mjs",
     "ingest:deploy": "node scripts/deploy-pixverse-ingest.mjs",
     "motion:bundle": "node scripts/build-motion.mjs",
-    "motion:studio": "remotion studio src/remotion/index.tsx"
+    "motion:studio": "remotion studio src/remotion/index.tsx",
+    "desktop:install": "npm ci --prefix desktop",
+    "desktop:dev": "npm start --prefix desktop",
+    "desktop:mac": "npm run dist:mac --prefix desktop",
+    "desktop:win": "npm run dist:win --prefix desktop",
+    "dev:standalone": "node scripts/standalone-server.mjs dev",
+    "start:standalone": "node scripts/standalone-server.mjs start"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "0.73.1",
@@ -39,10 +45,14 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "esbuild": "0.28.1",
-    "typebox": "1.3.30"
+    "typebox": "1.3.30",
+    "pg": "^8.16.3"
   },
   "overrides": {
     "postcss": "$postcss",
     "qs": "6.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5"
   }
 }

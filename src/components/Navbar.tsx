@@ -3,10 +3,11 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Video, History, Users, Mic, Coins, User, Sparkles } from "lucide-react";
+import { Video, History, Users, Mic, Coins, LogOut, KeyRound, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SessionData {
+  authMode?: "standalone";
   user: {
     id: string;
     account: string;
@@ -26,26 +27,44 @@ interface SessionData {
 export default function Navbar() {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionData | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const isAuthPage = pathname === "/login" || pathname === "/register";
 
   const fetchSession = async () => {
     try {
-      const resp = await fetch(`/api/sso/session?t=${Date.now()}`);
+      const resp = await fetch(`/api/session?t=${Date.now()}`);
       if (resp.ok) {
         const json = await resp.json();
         if (json.data) {
           setSession(json.data);
         }
-      }
+      } else if (resp.status === 401) setSession(null);
     } catch {
       // ignore
     }
   };
 
   useEffect(() => {
+    if (isAuthPage) return;
     fetchSession();
     const interval = setInterval(fetchSession, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthPage]);
+
+  const logout = async () => {
+    setSigningOut(true);
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error();
+      for (const key of ["active_lipsync_task_id", "preselected_avatar_id", "preselected_voice_id"]) localStorage.removeItem(key);
+      window.location.replace("/login");
+    } catch {
+      window.alert("退出失败，请检查网络后重试");
+      setSigningOut(false);
+    }
+  };
+
+  if (isAuthPage) return null;
 
   const navItems = [
     { name: "制作台", href: "/", icon: Video },
@@ -123,6 +142,12 @@ export default function Navbar() {
               <span className="text-zinc-300 truncate max-w-[100px] text-[11px]" title={session.user.account}>
                 {session.user.nickname || session.user.account}
               </span>
+            </div>
+          )}
+          {session?.authMode === "standalone" && (
+            <div className="flex items-center gap-1">
+              <Link href="/account" aria-label="账号安全" title="账号安全" className="rounded-lg p-2 text-zinc-400 hover:bg-white/5 hover:text-white"><KeyRound size={16} /></Link>
+              <button onClick={logout} disabled={signingOut} aria-label="退出登录" title="退出登录" className="rounded-lg p-2 text-zinc-400 hover:bg-white/5 hover:text-white disabled:opacity-40"><LogOut size={16} /></button>
             </div>
           )}
         </div>

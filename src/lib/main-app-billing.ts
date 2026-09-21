@@ -37,6 +37,7 @@ export function isExternallyBilledUser(
   user?: Partial<MainAppUser> | null,
 ): boolean {
   if (!user) return false;
+  if (user.billingAudience === "standalone") return false;
   if (user.role === "admin") return false;
   if (
     user.billingAudience === "internal" ||

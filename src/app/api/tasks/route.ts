@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Bound paid attempts independently of whether the task later refunds or is deleted.
-    if (isExternallyBilledUser(user)) releaseSlot = acquireGenerationSlot(user.id!);
+    if (isExternallyBilledUser(user) || user.billingAudience === "standalone") releaseSlot = acquireGenerationSlot(user.id!);
     const estimatedDuration = estimateReservationDuration(scriptText);
     const reservation = await reserveMainAppCredits({
       user,

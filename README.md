@@ -2,6 +2,8 @@
 
 基于 **Next.js** 全栈技术栈、**IndexTTS-2** 中文克隆配音引擎与 **HeyGen Precision MCP 客户端** 构建的现代化数字人对口型 Web 平台。
 
+独立 Electron 客户端（Windows / macOS）及邮箱注册登录的使用、打包和部署方式见 [独立桌面客户端说明](docs/独立桌面客户端.md)。
+
 ## ✨ 核心特性
 
 - **🎬 可视化制作台 (Studio)**：

@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isStandaloneAuth, supportsStandaloneAuth, usesStandaloneAuth } from "@/lib/auth-mode";
+import { AUTH_COOKIE, readStandaloneSession } from "@/lib/server/standalone-auth";
 import {
   getMainAppSessionCookieName,
   getMainAppSessionCookieOptions,
@@ -36,6 +38,27 @@ export async function middleware(request: NextRequest) {
     return isPublicProcessingInput
       ? NextResponse.next()
       : NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (supportsStandaloneAuth() && (pathname === "/login" || pathname === "/register" || pathname.startsWith("/api/auth/"))) {
+    return NextResponse.next();
+  }
+
+  if (usesStandaloneAuth(Boolean(request.cookies.get(AUTH_COOKIE)))) {
+    if (isStandaloneAuth() && pathname.startsWith("/api/sso/")) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (pathname === "/login" || pathname === "/register" || pathname.startsWith("/api/auth/") ||
+      pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
+    try {
+      if (await readStandaloneSession(request.cookies.get(AUTH_COOKIE)?.value)) return NextResponse.next();
+    } catch {
+      return NextResponse.json({ error: "账号服务暂时不可用" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
+    if (pathname.startsWith("/api/")) return NextResponse.json({ error: "请先登录", code: "UNAUTHENTICATED" }, {
+      status: 401, headers: { "Cache-Control": "no-store" },
+    });
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", pathname + request.nextUrl.search);
+    return NextResponse.redirect(login);
   }
 
   // 1. Whitelist static files, SSO callback, and public endpoints

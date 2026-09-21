@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supportsStandaloneAuth, usesStandaloneAuth } from "./auth-mode";
+import { AUTH_COOKIE, readStandaloneSession } from "./server/standalone-auth";
 import {
   getMainAppSessionCookieName,
   createRestrictedGraceSession,
@@ -14,9 +16,9 @@ export {
 } from "./media-access-policy";
 
 export interface AccessContext {
-  /** SSO 已配置时启用账号隔离 */
+  /** 独立账号模式或 SSO 已配置时启用账号隔离 */
   isolated: boolean;
-  /** 当前登录的主站用户 id（未隔离时为 null） */
+  /** 当前登录用户 id（未隔离时为 null） */
   userId: string | null;
   /** 管理员可跨账号访问所有任务 */
   isAdmin: boolean;
@@ -25,12 +27,17 @@ export interface AccessContext {
 
 /**
  * 解析当前请求的账号访问上下文。
+ * - 独立账号模式：始终隔离，身份只从本地账号会话读取。
  * - SSO 未配置（本地开发）：不隔离，行为与单机模式一致。
  * - SSO 已配置但无有效会话：isolated=true 且 userId=null，所有任务接口必须拒绝。
  */
 export async function resolveAccessContext(
   req: NextRequest
 ): Promise<AccessContext> {
+  if (usesStandaloneAuth(Boolean(req.cookies.get(AUTH_COOKIE)))) {
+    const session = await readStandaloneSession(req.cookies.get(AUTH_COOKIE)?.value);
+    return { isolated: true, userId: session?.user.id || null, isAdmin: false, session };
+  }
   if (!isSsoConfigured()) {
     if (process.env.NODE_ENV === "production") {
       return { isolated: true, userId: null, isAdmin: false, session: null };
@@ -75,7 +82,7 @@ export function canAccessTask(
 export function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
     {
-      error: "请先从主站登录后再使用数字人智能体",
+      error: supportsStandaloneAuth() ? "请先登录后再使用数字人智能体" : "请先从主站登录后再使用数字人智能体",
       code: "UNAUTHENTICATED",
     },
     { status: 401 }
