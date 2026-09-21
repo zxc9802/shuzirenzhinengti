@@ -11,6 +11,8 @@ import {
   prepareSourceVideo,
   finalizeVideo,
   sha256File,
+  encodeMp3,
+  type MediaProbeInfo,
 } from "./ffmpeg";
 import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
@@ -43,6 +45,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
   if (!task) return;
 
   const config = getAppConfig();
+  const audioOnly = task.inputs.outputType === "audio";
   const providerRoot = path.join(process.cwd(), ".runtime", "provider-input");
   const jobDir = path.join(config.storageDir, taskId);
   const providerToken = crypto.randomBytes(24).toString("hex");
@@ -117,7 +120,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       step: "tts",
       progress: 10,
     });
-    log("🚀 启动数字人对口型流水线...");
+    log(audioOnly ? "🗣️ 开始生成 MP3 配音..." : "🚀 启动数字人对口型流水线...");
 
     if (task.billing?.isExternalUser) {
       log(
@@ -130,38 +133,41 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
 
     // 0. Ensure source video exists locally (auto-download from videoUrl / COS if missing from local disk)
     let localVideoPath = task.inputs.videoPath;
-    if (localVideoPath) {
-      localVideoPath = resolveAllowedLocalMediaPath(localVideoPath) || "";
-    }
-    const needDownload = !localVideoPath || !fs.existsSync(localVideoPath);
-
-    if (needDownload) {
-      const sourceUrl = task.inputs.videoUrl;
-      if (!sourceUrl) {
-        throw new Error(`未找到可用视频文件，本地路径不存在且无云端直链: ${localVideoPath || "空"}`);
+    let originalProbe: MediaProbeInfo;
+    if (!audioOnly) {
+      if (localVideoPath) {
+        localVideoPath = resolveAllowedLocalMediaPath(localVideoPath) || "";
       }
-      log(`⬇️ 正在从云端存储同步视频素材至当前实例...`);
-      localVideoPath = path.join(jobDir, "input-video.mp4");
-      const bytes = await downloadTrustedMediaToFile({
-        source: sourceUrl,
-        outputPath: localVideoPath,
-      });
-      log(`✅ 视频素材已成功同步至本地 (${(bytes / 1024 / 1024).toFixed(2)} MB)`, "success");
-    }
+      const needDownload = !localVideoPath || !fs.existsSync(localVideoPath);
 
-    // 1. Probe source video
-    log("📹 正在探测原始口播视频参数...");
-    const originalProbe = await probeMedia(localVideoPath);
-    ensureTaskActive();
-    if (!originalProbe.width || !originalProbe.height) {
-      throw new Error("素材没有有效的视频画面");
+      if (needDownload) {
+        const sourceUrl = task.inputs.videoUrl;
+        if (!sourceUrl) {
+          throw new Error(`未找到可用视频文件，本地路径不存在且无云端直链: ${localVideoPath || "空"}`);
+        }
+        log(`⬇️ 正在从云端存储同步视频素材至当前实例...`);
+        localVideoPath = path.join(jobDir, "input-video.mp4");
+        const bytes = await downloadTrustedMediaToFile({
+          source: sourceUrl,
+          outputPath: localVideoPath,
+        });
+        log(`✅ 视频素材已成功同步至本地 (${(bytes / 1024 / 1024).toFixed(2)} MB)`, "success");
+      }
+
+      // 1. Probe source video
+      log("📹 正在探测原始口播视频参数...");
+      originalProbe = await probeMedia(localVideoPath);
+      ensureTaskActive();
+      if (!originalProbe.width || !originalProbe.height) {
+        throw new Error("素材没有有效的视频画面");
+      }
+      log(
+        `原始视频信息: 分辨率 ${originalProbe.width}x${originalProbe.height} | 时长 ${originalProbe.durationSeconds.toFixed(
+          2
+        )}s | 帧率 ${originalProbe.fps}fps | 含音频轨: ${originalProbe.hasAudio ? "是" : "否"}`
+      );
     }
     assertTaskCreditCoverage(task.billing, task.billing?.estimatedDuration || 0);
-    log(
-      `原始视频信息: 分辨率 ${originalProbe.width}x${originalProbe.height} | 时长 ${originalProbe.durationSeconds.toFixed(
-        2
-      )}s | 帧率 ${originalProbe.fps}fps | 含音频轨: ${originalProbe.hasAudio ? "是" : "否"}`
-    );
 
     // 2. Step: Speech Synthesis
     log("🗣️ 第一步: 正在合成定制原声配音 (根据字数可能需要 1~3 分钟)...");
@@ -203,6 +209,63 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       `专属原声音轨已就绪，时长 ${ttsResult.selectedDuration.toFixed(1)}s，音频指纹: ${sha256Audio.slice(0, 16)}...`,
       "success"
     );
+
+    if (audioOnly) {
+      currentStep = "finalize";
+      TaskStore.update(taskId, { step: "finalize", progress: 85 });
+      log("🎧 正在导出 MP3 配音...");
+      const mp3Path = path.join(jobDir, "voice-track.mp3");
+      await encodeMp3(ttsResult.finalWavPath, mp3Path);
+      const audioProbe = await probeMedia(mp3Path);
+      const mp3Hash = await sha256File(mp3Path);
+      ensureTaskActive();
+
+      const currentTaskData = TaskStore.get(taskId) || task;
+      const actualDuration = audioProbe.durationSeconds;
+      assertTaskCreditCoverage(currentTaskData.billing, actualDuration);
+      let chargedPoints: number | undefined;
+      let costCny: number | undefined;
+      let pointsBalanceAfter: number | undefined;
+      if (currentTaskData.billing?.isExternalUser) {
+        if (!currentTaskData.billing.requestId || !currentTaskData.userId) {
+          throw new Error("外部用户任务缺少主站积分结算标识");
+        }
+        chargedPoints = calculateRequiredPoints(actualDuration);
+        costCny = calculateCostCny(actualDuration);
+        TaskStore.update(taskId, { billing: { ...currentTaskData.billing, status: "settle_pending" } });
+        const settlement = await settleMainAppCredits({
+          userId: currentTaskData.userId, requestId: currentTaskData.billing.requestId,
+          actualDuration, chargedPoints, sessionToken,
+        });
+        pointsBalanceAfter = settlement.pointsBalance;
+      }
+
+      let exactAudioUrl = mp3Path;
+      if (CosService.isConfigured()) {
+        try {
+          ensureTaskActive();
+          exactAudioUrl = await CosService.uploadFile(mp3Path, `jobs/${taskId}/voice-track.mp3`);
+        } catch (cosErr) {
+          logServerError("pipeline.audio_upload_failed", cosErr, "warn");
+          log("云端存储暂不可用，已保留本地结果", "warn");
+        }
+      }
+      ensureTaskActive();
+      currentStep = "done";
+      TaskStore.update(taskId, {
+        status: "completed", step: "done", progress: 100,
+        billing: currentTaskData.billing ? {
+          ...currentTaskData.billing, actualDuration, chargedPoints, costCny, pointsBalanceAfter,
+          status: currentTaskData.billing.isExternalUser ? "settled" : "not_applicable",
+        } : undefined,
+        results: {
+          exactAudioUrl, audioFormat: "mp3", audioDuration: actualDuration, sha256Audio: mp3Hash,
+          chargedPoints, costCny, billingDuration: actualDuration,
+        },
+      });
+      log("🎉 MP3 配音已生成，可以试听和下载。", "success");
+      return;
+    }
 
     // 3. Step: Media Preparation & Normalization
     currentStep = "media_prep";
@@ -451,7 +514,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       },
       media: {
         video: {
-          original_duration_seconds: originalProbe.durationSeconds,
+          original_duration_seconds: originalProbe!.durationSeconds,
           final_duration_seconds: finalProbe.durationSeconds,
           resolution: `${finalProbe.width}x${finalProbe.height}`,
           fps: finalProbe.fps,

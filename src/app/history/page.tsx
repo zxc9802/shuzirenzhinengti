@@ -154,8 +154,8 @@ export default function HistoryPage() {
 
                     {task.results && (
                       <div className="flex items-center gap-3 text-[11px] text-zinc-400 font-mono pt-1">
-                        {task.results.videoDuration && (
-                          <span>时长: {formatDuration(task.results.videoDuration)}</span>
+                        {(task.results.videoDuration || task.results.audioDuration) && (
+                          <span>时长: {formatDuration(task.results.videoDuration || task.results.audioDuration || 0)}</span>
                         )}
                         {task.results.resolution && (
                           <span>分辨率: {task.results.resolution}</span>
@@ -166,6 +166,16 @@ export default function HistoryPage() {
                   </div>
 
                   <div className="flex items-center gap-2 self-stretch sm:self-auto shrink-0">
+                    {task.results?.exactAudioUrl && task.results.audioFormat === "mp3" && (
+                      <a
+                        href={`/api/tasks/${task.id}/download/voice-track.mp3`}
+                        download="voice-track.mp3"
+                        className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-3.5 py-2 text-xs font-bold text-white transition-all"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        下载配音 (MP3)
+                      </a>
+                    )}
                     {task.results?.finalVideoUrl && (
                       <a
                         href={`/api/tasks/${task.id}/download/final.mp4`}

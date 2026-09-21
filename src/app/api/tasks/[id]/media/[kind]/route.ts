@@ -49,10 +49,12 @@ export async function GET(
   }
   if (kind === "voice") {
     if (!isTaskOutputDeliverable(task)) return taskNotFoundResponse();
-    if (!isTrustedTaskOutputSource(task.results.exactAudioUrl, id, ["voice-track.wav", "exact-final-indextts.wav"])) {
+    const isMp3 = task.results.audioFormat === "mp3";
+    const filenames = isMp3 ? ["voice-track.mp3"] : ["voice-track.wav", "exact-final-indextts.wav"];
+    if (!isTrustedTaskOutputSource(task.results.exactAudioUrl, id, filenames)) {
       return taskNotFoundResponse();
     }
-    return servePrivateMedia(req, task.results.exactAudioUrl, { contentType: "audio/wav" });
+    return servePrivateMedia(req, task.results.exactAudioUrl, { contentType: isMp3 ? "audio/mpeg" : "audio/wav" });
   }
   return new Response("Media not found", { status: 404 });
 }

@@ -36,23 +36,24 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       const generated = spawnSync("ffmpeg", ["-v", "error", ...args], {encoding: "utf8"});
       assert.equal(generated.status, 0, generated.stderr);
     }
-    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure"]) {
+    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage"]) {
+      const audioOnly = scenario.startsWith("audio-");
       const events = [];
       globalThis.fetch = async (url, init) => {
         assert.ok(String(url).endsWith("/api/sso/billing"), "no real network calls");
         const request = JSON.parse(init.body);
         events.push({stage: "ledger", action: request.action, points: request.points});
-        if (scenario === "settle-outage" && request.action === "settle") throw new Error("simulated timeout");
+        if (scenario.endsWith("settle-outage") && request.action === "settle") throw new Error("simulated timeout");
         return Response.json({success: true, data: {reservedCredits: request.points,
           requestId: request.requestId, chargeRequired: true, pointsBalance: 940}});
       };
       const user = {id: "owner", role: scenario === "internal-success" ? "admin" : "member"};
       const reservation = await billing.reserveMainAppCredits({user, sessionToken: "fake", estimatedDuration: 6});
-      const duration = scenario === "under-reserved" ? 8 : 3;
+      const duration = scenario.endsWith("under-reserved") ? 8 : 3;
       let task = {id: scenario, userId: user.id, status: "pending", logs: [],
         billing: {isExternalUser: reservation.chargeRequired, status: reservation.chargeRequired ? "reserved" : "not_applicable",
           requestId: reservation.requestId, estimatedDuration: 6, estimatedPoints: reservation.requiredPoints, reservedPoints: reservation.reservedPoints},
-        inputs: {videoPath: scenario === "silent-smart" ? silent : sound, scriptText: "你好",
+        inputs: {videoPath: audioOnly ? "" : scenario === "silent-smart" ? silent : sound, videoUrl: "", outputType: audioOnly ? "audio" : "video", scriptText: "你好",
           speakerAudioUrl: speaker, videoFit: scenario === "preserve-failure" ? "preserve" : "smart", lipsyncProvider: "veed"}, results: {}};
       const TaskStore = {get: () => task, isDeleted: () => false,
         addLog: (_id, message, level, publicMessage) => task.logs.push({message, level, publicMessage}),
@@ -64,6 +65,10 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         "./indextts": {generateIndexTTS: async (_text, options) => {
           events.push({stage: "tts"});
           const wav = path.join(options.outDir, "voice-track.wav"); fs.writeFileSync(wav, "fixture");
+          if (audioOnly) {
+            const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", String(duration), wav], {encoding: "utf8"});
+            assert.equal(generated.status, 0, generated.stderr);
+          }
           return {finalWavPath: wav, rawDuration: duration, selectedDuration: duration};
         }},
         "./ffmpeg": {...media, finalizeVideo: async (_video, _audio, output) => {
@@ -93,14 +98,15 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         assert.ok(name in deps, `Unexpected dependency ${name}`); return deps[name];
       }, module, module.exports);
       await module.exports.runDigitalHumanPipeline(scenario, "fake");
-      if (scenario === "under-reserved" || scenario === "preserve-failure" || scenario === "setup-failure") {
+      if (audioOnly) assert.equal(events.some(e => e.stage === "lipsync"), false, "audio must never submit paid lip-sync");
+      if (scenario.endsWith("under-reserved") || scenario === "preserve-failure" || scenario === "setup-failure") {
         assert.equal(events.some(e => e.stage === "lipsync"), false, scenario);
         assert.equal(task.status, "failed", scenario);
         assert.equal(task.billing.status, "released", scenario);
         assert.equal(isTaskOutputDeliverable(task), false, scenario);
-        if (scenario === "under-reserved") assert.equal(task.errorCode, "BILLING_RESERVATION_TOO_SMALL");
+        if (scenario.endsWith("under-reserved")) assert.equal(task.errorCode, "BILLING_RESERVATION_TOO_SMALL");
         if (scenario === "setup-failure") assert.equal(events.some(e => e.stage === "tts"), false);
-      } else if (scenario === "settle-outage") {
+      } else if (scenario.endsWith("settle-outage")) {
         assert.equal(task.billing.status, "settle_pending");
         assert.equal(events.some(e => e.action === "release"), false);
         assert.equal(isTaskOutputDeliverable(task), false);
@@ -108,6 +114,16 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         assert.equal(task.status, "completed", `${scenario}: ${task.error}`);
         assert.equal(isTaskOutputDeliverable(task), true);
         assert.equal(events.filter(e => e.action === "settle").length, scenario === "internal-success" ? 0 : 1);
+        if (audioOnly) {
+          assert.equal(task.results.finalVideoUrl, undefined);
+          assert.equal(task.results.audioFormat, "mp3");
+          assert.match(task.results.exactAudioUrl, /voice-track\.mp3$/);
+          const probe = spawnSync("ffprobe", ["-v", "error", "-show_streams", "-of", "json", task.results.exactAudioUrl], {encoding: "utf8"});
+          const streams = JSON.parse(probe.stdout).streams;
+          assert.equal(streams.length, 1);
+          assert.equal(streams[0].codec_type, "audio");
+          assert.equal(streams[0].codec_name, "mp3");
+        }
       }
     }
   } finally {

@@ -21,6 +21,7 @@ interface PlayerComparisonProps {
   originalVideoUrl?: string;
   finalVideoUrl?: string;
   exactAudioUrl?: string;
+  audioFormat?: "wav" | "mp3";
   evidenceJsonUrl?: string;
   metadata?: any;
 }
@@ -30,6 +31,7 @@ export default function PlayerComparison({
   originalVideoUrl,
   finalVideoUrl,
   exactAudioUrl,
+  audioFormat,
   evidenceJsonUrl,
   metadata,
 }: PlayerComparisonProps) {
@@ -51,6 +53,29 @@ export default function PlayerComparison({
       setIsPlaying(true);
     }
   };
+
+  if (audioFormat === "mp3" && exactAudioUrl && !finalVideoUrl) {
+    return (
+      <div className="space-y-5 rounded-2xl border border-white/[0.1] bg-[#10121a]/95 p-6 backdrop-blur-xl shadow-2xl">
+        <h3 className="flex items-center gap-2 text-base font-bold text-zinc-100">
+          <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+          MP3 配音已生成
+        </h3>
+        <audio controls src={exactAudioUrl} preload="metadata" className="w-full" />
+        {metadata?.audioDuration && (
+          <p className="text-xs text-zinc-400">时长：{formatDuration(metadata.audioDuration)}</p>
+        )}
+        <a
+          href={`/api/tasks/${taskId}/download/voice-track.mp3`}
+          download="voice-track.mp3"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-bold text-white transition-all"
+        >
+          <Download className="h-3.5 w-3.5" />
+          下载配音 (MP3)
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 rounded-2xl border border-white/[0.1] bg-[#10121a]/95 p-6 backdrop-blur-xl shadow-2xl">

@@ -50,6 +50,7 @@ export default function StudioPage() {
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userSession, setUserSession] = useState<{ user?: any; billing?: any } | null>(null);
+  const [videoInputKey, setVideoInputKey] = useState(0);
 
   // 1. Initial restore on mount
   useEffect(() => {
@@ -203,8 +204,8 @@ export default function StudioPage() {
   }, [currentTask?.id, currentTask?.status]);
 
   const handleStartPipeline = async () => {
-    if (!videoData?.avatarId) {
-      setError("请先上传口播视频");
+    if (!videoData?.avatarId && !selectedVoice) {
+      setError("请先选择配音音色");
       return;
     }
     if (!scriptText.trim()) {
@@ -220,7 +221,7 @@ export default function StudioPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          avatarId: videoData.avatarId,
+          avatarId: videoData?.avatarId,
           scriptText: scriptText.trim(),
           toneProfile,
           videoFit,
@@ -253,6 +254,7 @@ export default function StudioPage() {
 
   const isRunning =
     currentTask?.status === "processing" || currentTask?.status === "pending";
+  const audioOnly = !videoData?.avatarId;
 
   const canRecoverPaidJob = Boolean(currentTask?.recoverable);
 
@@ -288,7 +290,7 @@ export default function StudioPage() {
             <span>数字人制作台</span>
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-zinc-400 max-w-2xl leading-relaxed">
-            上传口播视频与文案，选用专属克隆音色，一键生成唇形自然匹配的高清数字人视频。
+            输入文案并选择音色即可生成 MP3 配音；上传口播视频后，可生成唇形自然匹配的数字人视频。
           </p>
         </div>
 
@@ -313,12 +315,23 @@ export default function StudioPage() {
               <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-300 text-[11px] font-bold border border-white/[0.1]">
                 1
               </span>
-              口播视频素材 (MP4 / MOV)
+              口播视频素材 (可选，MP4 / MOV)
             </h2>
             <VideoUploader
+              key={videoInputKey}
               onVideoUploaded={setVideoData}
               disabled={isRunning}
             />
+            {videoData && (
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => { setVideoData(null); setVideoInputKey(key => key + 1); }}
+                className="mt-3 text-xs text-zinc-400 hover:text-white disabled:opacity-50"
+              >
+                移除当前视频，仅生成 MP3 配音
+              </button>
+            )}
           </div>
 
           {/* Card 2: Script Input */}
@@ -391,7 +404,7 @@ export default function StudioPage() {
                     </div>
                   </div>
 
-                  {isExternal && <p className="text-[11px] text-zinc-400">先预留 {reservedPoints.toLocaleString()} 积分，按成片实际时长结算，多余积分退回。</p>}
+                  {isExternal && <p className="text-[11px] text-zinc-400">先预留 {reservedPoints.toLocaleString()} 积分，按{audioOnly ? "配音" : "成片"}实际时长结算，多余积分退回。</p>}
                   {isInsufficient && (
                     <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
                       <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
@@ -409,7 +422,7 @@ export default function StudioPage() {
               );
             })()}
 
-            {scriptText.trim().length >= 400 && (
+            {!audioOnly && scriptText.trim().length >= 400 && (
               <p className="mt-2 text-[11px] leading-relaxed text-amber-300/90">
                 文案约 {scriptText.trim().length} 字，口播大概 {Math.max(1, Math.round(scriptText.trim().length / 4.4 / 60))} 分钟。超过 90 秒会自动分段对口型再拼接，不会因为单次轮询超时整段失败。
               </p>
@@ -417,7 +430,7 @@ export default function StudioPage() {
           </div>
 
           {/* Card 3: Lipsync engine */}
-          <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl">
+          {!audioOnly && <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl">
             <h2 className="text-xs font-bold text-zinc-100 uppercase tracking-wider mb-3.5 flex items-center gap-2">
               <span className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-300 text-[11px] font-bold border border-white/[0.1]">
                 3
@@ -467,7 +480,7 @@ export default function StudioPage() {
                 <div className="text-xs font-bold text-zinc-100">C</div>
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Card 4: Voice Selection & Fit Options */}
           <div className="rounded-2xl border border-white/[0.08] bg-[#10121a]/80 p-5 backdrop-blur-xl shadow-xl space-y-5">
@@ -514,7 +527,7 @@ export default function StudioPage() {
                 </div>
 
                 {/* Video Fit */}
-                <div>
+                {!audioOnly && <div>
                   <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
                     画面对齐策略 (Video Fit)
                   </label>
@@ -544,7 +557,7 @@ export default function StudioPage() {
                       严格保持原长
                     </button>
                   </div>
-                </div>
+                </div>}
               </div>
 
               {/* Emotion slider */}
@@ -587,7 +600,7 @@ export default function StudioPage() {
             return (
               <button
                 onClick={handleStartPipeline}
-                disabled={loading || isRunning || !videoData?.avatarId || !scriptText.trim()}
+                disabled={loading || isRunning || (audioOnly && !selectedVoice) || !scriptText.trim()}
                 className="w-full flex items-center justify-center gap-2 rounded-2xl bg-blue-600 hover:bg-blue-500 p-4 text-sm font-bold text-white shadow-lg shadow-blue-600/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-[0.99] border border-blue-400/30"
               >
                 <Play className="h-4 w-4 fill-white" />
@@ -595,8 +608,8 @@ export default function StudioPage() {
                   {isRunning
                     ? "流水线正在运行中..."
                     : isExternal && scriptText.trim()
-                    ? `开始执行数字人对口型流水线 (预留 ${estPoints.toLocaleString()} 积分)`
-                    : "开始执行数字人对口型流水线"}
+                    ? `${audioOnly ? "生成配音 (MP3)" : "开始执行数字人对口型流水线"} (预留 ${estPoints.toLocaleString()} 积分)`
+                    : audioOnly ? "生成配音 (MP3)" : "开始执行数字人对口型流水线"}
                 </span>
                 <ArrowRight className="h-4 w-4 text-blue-200 opacity-80 ml-1" />
               </button>
@@ -608,6 +621,7 @@ export default function StudioPage() {
         <div className="lg:col-span-6 space-y-6">
           {/* Pipeline Visualizer */}
           <PipelineVisualizer
+            audioOnly={currentTask ? currentTask.inputs.outputType === "audio" : audioOnly}
             step={currentTask?.step || "idle"}
             failedStep={currentTask?.failedStep}
             progress={currentTask?.progress || 0}
@@ -637,6 +651,7 @@ export default function StudioPage() {
               originalVideoUrl={currentTask.results.originalVideoUrl}
               finalVideoUrl={currentTask.results.finalVideoUrl}
               exactAudioUrl={currentTask.results.exactAudioUrl}
+              audioFormat={currentTask.results.audioFormat}
               evidenceJsonUrl={currentTask.results.evidenceJsonUrl}
               metadata={currentTask.results}
             />

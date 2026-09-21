@@ -59,6 +59,7 @@ export interface TaskItem {
   logs: LogEntry[];
   billing?: TaskBillingInfo;
   inputs: {
+    outputType?: "video" | "audio";
     avatarId?: string;
     videoName: string;
     videoPath: string;
@@ -76,6 +77,7 @@ export interface TaskItem {
     originalVideoUrl?: string;
     finalVideoUrl?: string;
     exactAudioUrl?: string;
+    audioFormat?: "wav" | "mp3";
     evidenceJsonUrl?: string;
     heygenLipsyncId?: string;
     lipsyncProvider?: LipsyncProvider;

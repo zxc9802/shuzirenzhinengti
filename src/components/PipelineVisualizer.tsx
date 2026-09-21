@@ -17,6 +17,7 @@ import type { PublicTaskStep } from "@/lib/public-contract";
 import { cn } from "@/lib/utils";
 
 interface PipelineVisualizerProps {
+  audioOnly?: boolean;
   step: PublicTaskStep;
   failedStep?: PublicTaskStep;
   progress: number;
@@ -32,22 +33,20 @@ const STEPS = [
   { key: "done", label: "成片交付就绪", sub: "生成完成可播放", icon: CheckCircle2 },
 ];
 
-function stepToIndex(stepKey: PublicTaskStep): number {
-  if (stepKey === "voice") return 0;
-  if (stepKey === "prepare") return 1;
-  if (stepKey === "check") return 2;
-  if (stepKey === "render") return 3;
-  if (stepKey === "finalize") return 4;
-  if (stepKey === "done") return 5;
-  return -1;
-}
+const AUDIO_STEPS = [
+  STEPS[0],
+  { key: "finalize", label: "导出 MP3", sub: "生成音频文件", icon: Layers },
+  { key: "done", label: "配音已就绪", sub: "可试听与下载", icon: CheckCircle2 },
+];
 
 export default function PipelineVisualizer({
+  audioOnly = false,
   step,
   failedStep,
   progress,
   status,
 }: PipelineVisualizerProps) {
+  const steps = audioOnly ? AUDIO_STEPS : STEPS;
   const getStepStatus = (index: number) => {
     // If not started yet, everything is upcoming/idle
     if (status === "idle" || step === "idle") {
@@ -58,7 +57,7 @@ export default function PipelineVisualizer({
       return "completed";
     }
 
-    const currentIdx = stepToIndex(failedStep || step);
+    const currentIdx = steps.findIndex(item => item.key === (failedStep || step));
 
     if (status === "failed") {
       if (index === currentIdx) return "error";
@@ -88,7 +87,7 @@ export default function PipelineVisualizer({
               {isIdle && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 font-medium">
                   <CircleDashed className="h-3 w-3 text-zinc-500" />
-                  待命状态 (请上传视频与文案并点击开始)
+                  待命状态 (请输入文案并选择音色)
                 </span>
               )}
               {status === "processing" && (
@@ -137,8 +136,8 @@ export default function PipelineVisualizer({
       </div>
 
       {/* Step Badges Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
-        {STEPS.map((s, idx) => {
+      <div className={cn("grid grid-cols-2 sm:grid-cols-3 gap-2.5", !audioOnly && "md:grid-cols-6")}>
+        {steps.map((s, idx) => {
           const stepStatus = getStepStatus(idx);
           const Icon = s.icon;
           return (

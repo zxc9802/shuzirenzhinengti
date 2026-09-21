@@ -45,6 +45,15 @@ export async function GET(
       downloadName: "voice-track.wav",
     });
   }
+  if (file === "voice-track.mp3") {
+    if (!isTrustedTaskOutputSource(task.results.exactAudioUrl, id, ["voice-track.mp3"])) {
+      return taskNotFoundResponse();
+    }
+    return servePrivateMedia(req, task.results.exactAudioUrl, {
+      contentType: "audio/mpeg",
+      downloadName: "voice-track.mp3",
+    });
+  }
   if (file === "production-report.json") {
     if (!isTaskOutputDeliverable(task)) return taskNotFoundResponse();
     const publicTask = toPublicTask(task);

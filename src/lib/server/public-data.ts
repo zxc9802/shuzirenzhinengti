@@ -95,6 +95,7 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
         }
       : undefined,
     inputs: {
+      outputType: task.inputs.outputType || "video",
       avatarId: task.inputs.avatarId,
       videoName: sanitizePublicText(task.inputs.videoName, "口播素材.mp4"),
       scriptText: task.inputs.scriptText,
@@ -111,6 +112,7 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
           : undefined,
       finalVideoUrl: deliverable && task.results.finalVideoUrl ? `${resultBase}/final` : undefined,
       exactAudioUrl: deliverable && task.results.exactAudioUrl ? `${resultBase}/voice` : undefined,
+      audioFormat: task.results.audioFormat,
       evidenceJsonUrl: deliverable && task.results.evidenceJsonUrl
         ? `/api/tasks/${encodeURIComponent(task.id)}/download/production-report.json`
         : undefined,

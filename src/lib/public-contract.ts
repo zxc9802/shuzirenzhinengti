@@ -44,6 +44,7 @@ export interface PublicTaskItem {
   logs: PublicLogEntry[];
   billing?: PublicTaskBilling;
   inputs: {
+    outputType?: "video" | "audio";
     avatarId?: string;
     videoName: string;
     scriptText: string;
@@ -57,6 +58,7 @@ export interface PublicTaskItem {
     originalVideoUrl?: string;
     finalVideoUrl?: string;
     exactAudioUrl?: string;
+    audioFormat?: "wav" | "mp3";
     evidenceJsonUrl?: string;
     chargedPoints?: number;
     costCny?: number;

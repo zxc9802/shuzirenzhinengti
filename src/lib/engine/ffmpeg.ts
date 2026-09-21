@@ -102,6 +102,12 @@ export function execMediaCommand(
 
 const execCommand = execMediaCommand;
 
+export async function encodeMp3(inputPath: string, outputPath: string): Promise<void> {
+  await execCommand("ffmpeg", [
+    "-y", "-i", inputPath, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", outputPath,
+  ]);
+}
+
 export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Media file not found: ${filePath}`);

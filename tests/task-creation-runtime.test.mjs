@@ -47,8 +47,12 @@ test("task POST enforces credits and concurrency, sanitizes errors, and keeps in
       "@/lib/engine/pipeline": {runDigitalHumanPipeline: id => {
         pipelines.push(id); return new Promise(resolve => {finish = resolve;});
       }},
-      "@/lib/store/avatar-store": {AvatarStore: {get: () => ({id: "avatar", userId: user.id, videoPath: "fixture"})}},
-      "@/lib/store/voice-store": {VoiceStore: {getDefault: () => ({id: "voice", isDefault: true, audioPath: "fixture"})}},
+      "@/lib/store/avatar-store": {AvatarStore: {get: id => id === "avatar" ? ({id: "avatar", userId: user.id, videoPath: "fixture"}) : undefined}},
+      "@/lib/store/voice-store": {VoiceStore: {
+        getDefault: () => ({id: "voice", isDefault: true, audioPath: "fixture"}),
+        get: id => id === "chosen-voice" ? {id, userId: user.id, audioPath: "chosen-audio"}
+          : id === "foreign-voice" ? {id, userId: "someone-else", audioPath: "private-audio"} : undefined,
+      }},
       "@/lib/server/public-data": publicData,
       "@/lib/main-app-billing": billing,
       "@/lib/billing-estimate": estimate,
@@ -96,6 +100,27 @@ test("task POST enforces credits and concurrency, sanitizes errors, and keeps in
     assert.equal(requests.length, countBeforeAdmin);
     assert.equal(tasks[1].billing.isExternalUser, false);
     finish(); await new Promise(resolve => setImmediate(resolve));
+    user = {...user, id: "audio-user", role: "member", billingAudience: "external"};
+    mode = "ok";
+    const beforeAudio = tasks.length;
+    assert.equal((await post({scriptText: "你好", speakerVoiceId: "foreign-voice"})).status, 404);
+    assert.equal((await post({scriptText: "你好", avatarId: "missing-avatar"})).status, 404);
+    assert.equal((await post({scriptText: "你好", avatarId: {}})).status, 400);
+    assert.equal((await post({scriptText: "  ", speakerVoiceId: "chosen-voice"})).status, 400);
+    assert.equal(tasks.length, beforeAudio);
+    for (const avatarId of [undefined, null, ""]) {
+      const response = await post({avatarId, scriptText: "你好", speakerVoiceId: "chosen-voice"});
+      assert.equal(response.status, 200);
+      const task = tasks.at(-1);
+      assert.equal(task.inputs.outputType, "audio");
+      assert.equal(task.inputs.avatarId, undefined);
+      assert.equal(task.inputs.videoPath, "");
+      assert.equal(task.inputs.speakerAudioUrl, "chosen-audio");
+      assert.equal(task.billing.status, "reserved");
+      assert.equal((await response.json()).task.inputs.outputType, "audio");
+      finish(); await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(tasks[0].inputs.outputType, "video");
   } finally {
     finish?.(); globalThis.fetch = savedFetch;
     for (const key of keys) {

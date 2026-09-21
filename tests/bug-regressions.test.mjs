@@ -204,6 +204,59 @@ function makeMedia(tmp, seconds = 3) {
   return { video, audio };
 }
 
+test("MP3 output can be previewed and downloaded only by its owner after settlement", async () => {
+  const s = sandbox();
+  try {
+    const { TaskStore } = s.load("src/lib/store/task-store.ts");
+    const task = TaskStore.create({ ...baseTask(), status: "completed", step: "done",
+      billing: { ...baseTask().billing, status: "settled" },
+      inputs: { ...baseTask().inputs, avatarId: undefined, outputType: "audio" },
+    });
+    const file = path.join(process.cwd(), "public/jobs", task.id, "voice-track.mp3");
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.writeFileSync(file, "mp3-test-bytes");
+    TaskStore.update(task.id, { results: { exactAudioUrl: file, audioFormat: "mp3" } });
+    const preview = s.load("src/app/api/tasks/[id]/media/[kind]/route.ts").GET;
+    const download = s.load("src/app/api/tasks/[id]/download/[file]/route.ts").GET;
+    const req = new NextRequest("https://app.example.test/api/tasks/preview");
+    const params = { params: Promise.resolve({id: task.id, kind: "voice", file: "voice-track.mp3"}) };
+    const played = await preview(req, params);
+    assert.equal(played.status, 200);
+    assert.equal(played.headers.get("content-type"), "audio/mpeg");
+    assert.equal(await played.text(), "mp3-test-bytes");
+    const downloaded = await download(req, params);
+    assert.equal(downloaded.status, 200);
+    assert.equal(downloaded.headers.get("content-type"), "audio/mpeg");
+    assert.match(downloaded.headers.get("content-disposition"), /voice-track\.mp3/);
+    assert.equal(await downloaded.text(), "mp3-test-bytes");
+    const publicTask = s.load("src/lib/server/public-data.ts").toPublicTask(TaskStore.get(task.id));
+    assert.equal(publicTask.results.audioFormat, "mp3");
+    assert.equal(publicTask.results.exactAudioUrl, `/api/tasks/${task.id}/media/voice`);
+    assert.equal(publicTask.results.finalVideoUrl, undefined);
+    for (const change of [
+      {userId: "other-user"},
+      {userId: "audit-user", billing: {...task.billing, status: "settle_pending"}},
+      {billing: {...task.billing, status: "settled"}, results: {exactAudioUrl: file.replace(task.id, "other-task")}},
+    ]) {
+      TaskStore.update(task.id, change);
+      assert.equal((await preview(req, params)).status, 404);
+      assert.equal((await download(req, params)).status, 404);
+    }
+  } finally { s.close(); }
+});
+
+test("audio-only result renders an audio player and MP3 download without video controls", () => {
+  const s = sandbox();
+  try {
+    const hooks = hookHarness(s);
+    const Player = s.load("src/components/PlayerComparison.tsx").default;
+    const tree = hooks.render(Player, {taskId: "audio-task", exactAudioUrl: "/api/tasks/audio-task/media/voice", audioFormat: "mp3"});
+    assert.equal(findElement(tree, node => node.type === "audio").props.src, "/api/tasks/audio-task/media/voice");
+    assert.equal(findElement(tree, node => node.type === "a").props.href, "/api/tasks/audio-task/download/voice-track.mp3");
+    assert.equal(findElement(tree, node => node.type === "video"), undefined);
+  } finally { s.close(); }
+});
+
 test("B10: restoring a task must retain a usable avatar when making the next task", async t => {
   const s = sandbox(); const savedStorage = globalThis.localStorage;
   try {
@@ -424,7 +477,7 @@ test("B6: concurrent audio claims preserve the winner, and retrying a video uplo
   } finally { s.close(); }
 });
 
-test("B10: refresh restores a known avatar while legacy tasks without one keep Start disabled", async () => {
+test("B10: refresh restores a known avatar and allows audio-only generation with a selected voice", async () => {
   const previousStorage = globalThis.localStorage;
   for (const avatarId of ["original-avatar", undefined]) {
     const s = sandbox();
@@ -442,6 +495,16 @@ test("B10: refresh restores a known avatar while legacy tasks without one keep S
       const button = findElement(tree, node => node.type === "button" && node.props.onClick?.name === "handleStartPipeline");
       assert.equal(button.props.disabled, !avatarId);
       if (avatarId) assert.equal(hooks.state[0].avatarId, avatarId);
+      hooks.state[5] = { id: "selected-voice", name: "测试音色" };
+      const ready = hooks.render(Component);
+      const start = findElement(ready, node => node.type === "button" && node.props.onClick?.name === "handleStartPipeline");
+      assert.equal(start.props.disabled, false);
+      let submitted;
+      globalThis.fetch = async (_url, init) => { submitted = JSON.parse(init.body); return Response.json({task: {id: "new-task"}}); };
+      await start.props.onClick();
+      assert.equal(submitted.avatarId, avatarId);
+      assert.equal(submitted.speakerVoiceId, "selected-voice");
+      assert.equal(submitted.scriptText, "测试");
     } finally { globalThis.localStorage = previousStorage; s.close(); }
   }
 });

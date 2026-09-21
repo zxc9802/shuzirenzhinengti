@@ -50,10 +50,10 @@ export async function POST(req: NextRequest) {
       engine,
     } = body;
 
-    if (typeof avatarId !== "string" || !avatarId ||
+    if ((avatarId != null && typeof avatarId !== "string") ||
       typeof scriptText !== "string" || !scriptText.trim()) {
       return NextResponse.json(
-        { error: "缺少口播形象或文本内容" },
+        { error: "请输入文本内容并检查口播形象参数" },
         { status: 400 }
       );
     }
@@ -78,10 +78,10 @@ export async function POST(req: NextRequest) {
       billingAudience: "internal",
     };
 
-    const avatar = AvatarStore.get(String(avatarId));
+    const avatar = avatarId ? AvatarStore.get(avatarId) : undefined;
     if (
-      !avatar ||
-      (!canViewAllMedia(access) && avatar.userId !== access.userId)
+      avatarId && (!avatar ||
+      (!canViewAllMedia(access) && avatar.userId !== access.userId))
     ) {
       return NextResponse.json({ error: "口播形象不存在" }, { status: 404 });
     }
@@ -98,8 +98,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "音色不存在" }, { status: 404 });
     }
 
-    const avatarSource = avatar.videoPath || avatar.videoUrl;
-    if (!isOwnedUploadSource({ source: avatarSource, userId: avatar.userId, folder: "videos" })) {
+    const avatarSource = avatar?.videoPath || avatar?.videoUrl;
+    if (avatar && !isOwnedUploadSource({ source: avatarSource, userId: avatar.userId, folder: "videos" })) {
       return NextResponse.json({ error: "口播形象素材无效，请重新上传" }, { status: 400 });
     }
     const voiceSource = selectedVoice.audioPath || selectedVoice.audioUrl;
@@ -138,10 +138,11 @@ export async function POST(req: NextRequest) {
         status: reservation.chargeRequired ? "reserved" : "not_applicable",
       },
       inputs: {
-        avatarId: avatar.id,
-        videoName: avatar.name || "口播素材.mp4",
-        videoPath: avatar.videoPath || "",
-        videoUrl: avatar.videoUrl,
+        outputType: avatar ? "video" : "audio",
+        avatarId: avatar?.id,
+        videoName: avatar ? avatar.name || "口播素材.mp4" : "配音.mp3",
+        videoPath: avatar?.videoPath || "",
+        videoUrl: avatar?.videoUrl || "",
         scriptText,
         toneProfile,
         videoFit,
