@@ -599,7 +599,7 @@ export const CosService = {
 
     if (!storagePolicyPromise) {
       const allowedOrigins = new Set<string>();
-      for (const value of [process.env.PUBLIC_APP_URL, config.publicBaseUrl]) {
+      for (const value of [process.env.PUBLIC_APP_URL, config.publicBaseUrl, process.env.AUTH_DESKTOP_URL]) {
         if (!value) continue;
         try {
           allowedOrigins.add(new URL(value).origin);

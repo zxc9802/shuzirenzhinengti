@@ -98,6 +98,15 @@ test("cross-origin registration, login, logout and password changes are blocked"
   }
 });
 
+test("the configured desktop origin can register while unlisted origins remain blocked", async () => {
+  process.env.AUTH_DESKTOP_URL = "https://desktop.studio.test";
+  try {
+    const response = await post("register", { email: "desktop-origin@example.com", nickname: "桌面验收", password: "correct horse 123" }, { origin: "https://desktop.studio.test" });
+    assert.equal(response.status, 200);
+    assert.equal((await post("login", {}, { origin: "https://unlisted.test" })).status, 403);
+  } finally { delete process.env.AUTH_DESKTOP_URL; }
+});
+
 test("password change revokes all previous sessions and rejects the old password", async () => {
   const first = tokenOf(await signup("change@example.com"));
   const second = tokenOf(await post("login", { email: "change@example.com", password: "correct horse 123" }));

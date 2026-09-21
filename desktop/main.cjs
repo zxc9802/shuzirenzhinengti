@@ -11,7 +11,7 @@ const setupUrl = pathToFileURL(path.join(__dirname, "setup.html")).href;
 const configPath = () => path.join(app.getPath("userData"), "server.json");
 function readServer() {
   try { return serverOrigin(JSON.parse(fs.readFileSync(configPath(), "utf8")).server, app.isPackaged); }
-  catch { return "https://shuziren.qycm.top"; }
+  catch { return "https://digital-human-studio-qycm.zeabur.app"; }
 }
 
 async function verifyServer(origin) {

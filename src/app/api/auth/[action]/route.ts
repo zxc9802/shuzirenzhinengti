@@ -22,8 +22,9 @@ export async function POST(request: NextRequest, context: Context) {
   if (!["register", "login", "logout", "password"].includes(action)) return json({ error: "Not found" }, 404);
   try {
     // Require same-origin JSON, including on login and logout (login CSRF).
-    const expectedOrigin = new URL(process.env.AUTH_PUBLIC_URL || request.url).origin;
-    if (request.headers.get("origin") !== expectedOrigin || request.headers.get("sec-fetch-site") === "cross-site") {
+    const allowedOrigins = [process.env.AUTH_PUBLIC_URL || request.url, process.env.AUTH_DESKTOP_URL]
+      .filter((url): url is string => Boolean(url)).map(url => new URL(url).origin);
+    if (!allowedOrigins.includes(request.headers.get("origin") || "") || request.headers.get("sec-fetch-site") === "cross-site") {
       throw new AuthError("请求来源无效，请重新打开客户端", 403);
     }
     const cookie = request.cookies.get(AUTH_COOKIE)?.value;

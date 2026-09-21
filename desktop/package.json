@@ -1,7 +1,7 @@
 {
   "name": "digital-human-studio-desktop",
   "productName": "数字人工作室",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "数字人制作独立桌面客户端",
   "author": "Digital Human Studio",
   "private": true,
