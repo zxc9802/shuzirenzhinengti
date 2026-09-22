@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "crypto";
 import type { LipsyncProvider } from "@/lib/lipsync-provider";
 import type { AvatarItem } from "@/lib/store/avatar-store";
 import type { TaskItem, TaskStep } from "@/lib/store/task-store";
@@ -149,13 +150,19 @@ export function toPublicVoice(voice: VoiceItem, canManage?: boolean): PublicVoic
   };
 }
 
+export function avatarCoverVersion(avatar: AvatarItem): string {
+  return createHash("sha256")
+    .update(JSON.stringify([avatar.id, avatar.userId, avatar.coverUrl]))
+    .digest("hex").slice(0, 24);
+}
+
 export function toPublicAvatar(avatar: AvatarItem, canManage?: boolean): PublicAvatarItem {
   const base = `/api/avatars/${encodeURIComponent(avatar.id)}/media`;
   return {
     id: avatar.id,
     name: sanitizePublicText(avatar.name, "口播形象"),
     videoUrl: `${base}?kind=video`,
-    coverUrl: avatar.coverUrl ? `${base}?kind=cover` : undefined,
+    coverUrl: avatar.coverUrl ? `${base}?kind=cover&v=${avatarCoverVersion(avatar)}` : undefined,
     durationSeconds: avatar.durationSeconds,
     width: avatar.width,
     height: avatar.height,

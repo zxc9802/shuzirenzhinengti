@@ -27,6 +27,7 @@ import type { PublicAvatarItem } from "@/lib/public-contract";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
 import { uploadMediaFile } from "@/lib/client-media-upload";
 import { inspectVideoFile, recoverAvatarCover, type VideoInspection } from "@/lib/client-video-preview";
+import AvatarCover from "@/components/AvatarCover";
 
 // Sub-component for individual avatar card item with resilient cover display and hover preview
 function AvatarCardItem({
@@ -44,24 +45,33 @@ function AvatarCardItem({
   const [extractMsg, setExtractMsg] = useState<string | null>(null);
   const [coverUrl, setCoverUrl] = useState(avatar.coverUrl || "");
   const [isHovered, setIsHovered] = useState(false);
-  const [imgError, setImgError] = useState(false);
+  const [previewRequested, setPreviewRequested] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setCoverUrl(avatar.coverUrl || "");
-    setImgError(false);
   }, [avatar.coverUrl]);
 
-  const handleMouseEnter = () => {
-    setIsHovered(true);
+  useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
+      if (isHovered) {
+        videoRef.current.currentTime = 0;
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.pause();
+      }
     }
+  }, [isHovered]);
+
+  const handleMouseEnter = () => {
+    setPreviewRequested(true);
+    setIsHovered(true);
   };
 
   const handleMouseLeave = () => {
     setIsHovered(false);
+    setPreviewReady(false);
     if (videoRef.current) {
       videoRef.current.pause();
     }
@@ -82,7 +92,6 @@ function AvatarCardItem({
       const data = await resp.json();
       if (data.success && data.coverUrl) {
         setCoverUrl(data.coverUrl);
-        setImgError(false);
         onCoverUpdated(data.coverUrl);
         setExtractMsg("封面更新成功！");
         setTimeout(() => setExtractMsg(null), 2000);
@@ -109,50 +118,48 @@ function AvatarCardItem({
         {/* Background Video player (plays on hover) */}
         <video
           ref={videoRef}
-          src={avatar.videoUrl}
+          src={previewRequested ? avatar.videoUrl : undefined}
           className={cn(
             "pointer-events-none absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-            isHovered ? "opacity-100 z-10" : "opacity-0 z-0"
+            isHovered && previewReady ? "opacity-100 z-10" : "opacity-0 z-0"
           )}
           muted
           playsInline
           loop
-          preload="metadata"
+          preload="none"
+          onPlaying={() => setPreviewReady(true)}
+          onError={() => setPreviewReady(false)}
         />
 
         {/* Static Cover Image (visible when not hovering or loading) */}
-        {coverUrl && !imgError ? (
-          <img
-            src={coverUrl}
-            alt={avatar.name}
-            crossOrigin="anonymous"
-            onError={() => setImgError(true)}
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105",
-              isHovered ? "opacity-0" : "opacity-100"
-            )}
-          />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-900/80">
-            <Video className="h-10 w-10 text-zinc-600 mb-2" />
-            <p className="text-xs text-zinc-400">暂无封面或正在加载</p>
-            {avatar.canManage !== false && (
-              <button
-                type="button"
-                onClick={handleReExtractCover}
-                disabled={isExtracting}
-                className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow"
-              >
-                {isExtracting ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Camera className="h-3.5 w-3.5" />
-                )}
-                <span>立即抽取封面</span>
-              </button>
-            )}
-          </div>
-        )}
+        <AvatarCover
+          avatar={{ ...avatar, coverUrl }}
+          className={cn(
+            "absolute inset-0 h-full w-full transition-transform duration-500 group-hover:scale-105",
+            isHovered && previewReady ? "opacity-0" : "opacity-100"
+          )}
+          fallback={
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-900/80">
+              <Video className="h-10 w-10 text-zinc-600 mb-2" />
+              <p className="text-xs text-zinc-400">暂无封面或正在加载</p>
+              {avatar.canManage !== false && (
+                <button
+                  type="button"
+                  onClick={handleReExtractCover}
+                  disabled={isExtracting}
+                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow"
+                >
+                  {isExtracting ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5" />
+                  )}
+                  <span>立即抽取封面</span>
+                </button>
+              )}
+            </div>
+          }
+        />
 
         {/* Top Badges */}
         <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5">

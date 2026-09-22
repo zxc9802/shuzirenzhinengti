@@ -366,7 +366,7 @@ test("toPublicVoice and toPublicAvatar hide storage locations behind proxy URLs"
   );
   const avatarJson = JSON.stringify(avatar);
   assert.equal(avatar.videoUrl, "/api/avatars/avatar_1/media?kind=video");
-  assert.equal(avatar.coverUrl, "/api/avatars/avatar_1/media?kind=cover");
+  assert.match(avatar.coverUrl, /^\/api\/avatars\/avatar_1\/media\?kind=cover&v=[a-f0-9]{24}$/);
   assert.equal(avatar.storedRemotely, true);
   assert.equal(avatar.canManage, false);
   assert.doesNotMatch(avatarJson, IMPLEMENTATION_MARKERS, avatarJson);

@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     if (access.isolated && !access.userId) return unauthorizedResponse();
 
     const body = await req.json();
-    const { id, timestamp = 1.0 } = body;
+    const { id, timestamp = 1.0, onlyIfMissing = false } = body;
 
     if (!id) {
       return NextResponse.json({ error: "缺少形象素材 ID" }, { status: 400 });
@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
 
     const avatar = AvatarStore.get(id);
     if (!avatar || !canManageMediaItem(access, avatar)) return mediaNotFoundResponse();
+    if (onlyIfMissing && avatar.coverUrl) {
+      return NextResponse.json({ success: true, coverUrl: toPublicAvatar(avatar, true).coverUrl });
+    }
     cleanupUserId = avatar.userId;
     releaseSlot = acquireCoverExtractionSlot(avatar.userId || access.userId || "local");
     if (!releaseSlot) {

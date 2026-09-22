@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { AvatarStore } from "@/lib/store/avatar-store";
 import { servePrivateMedia } from "@/lib/server/media-response";
+import { avatarCoverVersion } from "@/lib/server/public-data";
 import { isOwnedUploadSource } from "@/lib/server/upload-policy";
 import {
   canViewAllMedia,
@@ -27,7 +28,22 @@ export async function GET(
     if (!isOwnedUploadSource({ source: avatar.coverUrl, userId: avatar.userId, folder: "thumbnails" })) {
       return mediaNotFoundResponse();
     }
-    return servePrivateMedia(req, avatar.coverUrl, { contentType: "image/jpeg" });
+    // Uploaded and extracted covers have unique source keys. Revalidate access on
+    // every visit, but skip the object-storage round trip for unchanged images.
+    const etag = `"${avatarCoverVersion(avatar)}"`;
+    const headers = {
+      "Cache-Control": "private, no-cache",
+      ETag: etag,
+    };
+    const validators = req.headers.get("if-none-match")?.split(",").map(value => value.trim().replace(/^W\//, ""));
+    if (validators?.includes(etag)) {
+      return new Response(null, { status: 304, headers });
+    }
+    const response = await servePrivateMedia(req, avatar.coverUrl, { contentType: "image/jpeg" });
+    if (response.status === 200) {
+      for (const [name, value] of Object.entries(headers)) response.headers.set(name, value);
+    }
+    return response;
   }
   const videoSource = avatar.videoPath || avatar.videoUrl;
   if (!isOwnedUploadSource({ source: videoSource, userId: avatar.userId, folder: "videos" })) {

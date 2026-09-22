@@ -31,12 +31,13 @@ export function inspectVideoFile(file: Blob): Promise<VideoInspection> {
       capturing = true;
       try {
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
         const context = canvas.getContext("2d");
         if (!context || !canvas.width || !canvas.height) return finish(null);
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(finish, "image/jpeg", 0.9);
+        canvas.toBlob(finish, "image/jpeg", 0.8);
       } catch { finish(null); }
     };
     video.onloadeddata = () => {
@@ -53,13 +54,27 @@ export function inspectVideoFile(file: Blob): Promise<VideoInspection> {
   });
 }
 
-export async function recoverAvatarCover(id: string): Promise<string | null> {
+export async function recoverAvatarCover(id: string, onlyIfMissing = false): Promise<string | null> {
   try {
     const response = await fetch("/api/avatars/extract-cover", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, timestamp: 1 }),
+      body: JSON.stringify({ id, timestamp: 1, ...(onlyIfMissing ? { onlyIfMissing: true } : {}) }),
     });
     const data = await response.json();
     return response.ok && data.success && data.coverUrl ? data.coverUrl : null;
   } catch { return null; }
+}
+
+// Missing covers are repaired sequentially, including across cards/remounts, so
+// opening a library cannot start competing video decoders for the same user.
+let coverRecoveryQueue: Promise<unknown> = Promise.resolve();
+const pendingCoverRecoveries = new Map<string, Promise<string | null>>();
+
+export function ensureAvatarCover(id: string): Promise<string | null> {
+  const pending = pendingCoverRecoveries.get(id);
+  if (pending) return pending;
+  const recovery = coverRecoveryQueue.then(() => recoverAvatarCover(id, true));
+  pendingCoverRecoveries.set(id, recovery);
+  coverRecoveryQueue = recovery.finally(() => pendingCoverRecoveries.delete(id));
+  return recovery;
 }

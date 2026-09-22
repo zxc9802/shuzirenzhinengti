@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { PublicAvatarItem } from "@/lib/public-contract";
 import { formatBytes, formatDuration, cn } from "@/lib/utils";
+import AvatarCover from "./AvatarCover";
 
 interface AvatarLibraryProps {
   selectedAvatarId?: string;
@@ -134,22 +135,10 @@ export default function AvatarLibrary({
               >
                 <div className="flex gap-3 items-center">
                   <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg bg-black border border-white/[0.08]">
-                    {avatar.coverUrl ? (
-                      <img
-                        src={avatar.coverUrl}
-                        alt={avatar.name}
-                        crossOrigin="anonymous"
-                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                    ) : (
-                      <video
-                        src={avatar.videoUrl}
-                        className="h-full w-full object-cover"
-                        muted
-                        playsInline
-                        preload="metadata"
-                      />
-                    )}
+                    <AvatarCover
+                      avatar={avatar}
+                      className="h-full w-full transition-transform group-hover:scale-105"
+                    />
                     <div className="absolute top-1 right-1 z-10">
                       {avatar.storedRemotely ? (
                         <span className="flex items-center gap-0.5 rounded bg-blue-500/80 px-1 py-0.2 text-[8px] font-bold text-white shadow-sm">
