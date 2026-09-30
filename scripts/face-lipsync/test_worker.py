@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
+from unittest.mock import patch
 import wave
 
 import numpy as np
-from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offset, prepare
+from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offset, prepare, composite
 
 
 class FaceWorkflowTests(unittest.TestCase):
@@ -65,6 +67,31 @@ class FaceWorkflowTests(unittest.TestCase):
                      [{"delayMs": 0, "confidence": 5}, {"delayMs": 120, "confidence": 6}]]:
             with self.assertRaises(QualityError):
                 choose_delay(rows)
+
+    def test_composite_registers_against_exact_provider_input_not_rescaled_base(self):
+        source = np.random.default_rng(9).uniform(0, 255, (60, 12, 32, 3)).astype(np.float32)
+        tail = np.repeat(source[-1:], 9, axis=0)
+        rendered = np.concatenate([np.repeat(source[:1], 18, axis=0), source, tail])
+        reference = np.concatenate([source, tail])
+        unrelated_base = np.roll(source, 12, axis=0)
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            (job / "face-input.mp4").touch()
+            (job / "face-manifest.json").write_text(json.dumps({"durationSeconds": 2,
+                "source": {"width": 64, "height": 64}, "crop": {"x": 0, "y": 0, "size": 64}}))
+            def decoded(file, *args, **kwargs):
+                if Path(file).name == "face-input.mp4":
+                    self.assertIn("trim=start_frame=18", kwargs["extra"])
+                    return iter(reference)
+                return iter(rendered if Path(file).name == "rendered.mp4" else unrelated_base)
+            # Stop just before encoding; exercise the actual correspondence
+            # check using decoded-frame fixtures without loading face models.
+            with patch("worker.probe", return_value={"width": 64, "height": 64, "duration": 2.9}), \
+                 patch("worker.frames", side_effect=decoded), \
+                 patch("worker.sp.Popen", side_effect=RuntimeError("registration-passed")):
+                with self.assertRaisesRegex(RuntimeError, "registration-passed"):
+                    composite({"jobDir": str(job), "renderedPath": str(job / "rendered.mp4")})
+            self.assertEqual(json.loads((job / "face-registration.json").read_text())["fixedFrameOffset"], 0)
 
 
 if __name__ == "__main__":

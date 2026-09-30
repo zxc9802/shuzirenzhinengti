@@ -360,10 +360,43 @@ export async function sliceMedia(params: {
 
 export async function concatVideos(
   inputPaths: string[],
-  outputPath: string
+  outputPath: string,
+  chunkDurations?: number[]
 ): Promise<void> {
   if (inputPaths.length === 0) {
     throw new Error("没有可拼接的视频分段");
+  }
+  if (chunkDurations) {
+    if (chunkDurations.length !== inputPaths.length ||
+        chunkDurations.some(seconds => !Number.isFinite(seconds) || seconds <= 0)) {
+      throw new Error("对口型分段时间轴无效");
+    }
+    const tempDir = fs.mkdtempSync(path.join(path.dirname(outputPath), ".lipsync-chunks-"));
+    try {
+      const normalized: string[] = [];
+      let boundary = 0;
+      for (const [index, input] of inputPaths.entries()) {
+        const seconds = chunkDurations[index];
+        const info = await probeMedia(input);
+        const duration = info.videoDurationSeconds ?? (!info.hasAudio ? info.durationSeconds : undefined);
+        if (!info.width || !Number.isFinite(duration) || Math.abs(duration! - seconds) > 0.15) {
+          throw Object.assign(new Error("对口型分段时长偏差过大，无法安全拼接"), { code: "LIPSYNC_MEDIA" });
+        }
+        // Native-face inputs use 30 fps. Keep every chunk on its submitted
+        // speech boundary; provider audio/container padding must not move it.
+        const frames = Math.round((boundary + seconds) * 30) - Math.round(boundary * 30);
+        boundary += seconds;
+        const file = path.join(tempDir, `${index}.mp4`);
+        await execCommand("ffmpeg", ["-v", "error", "-y", "-i", input, "-an", "-vf",
+          `fps=30,tpad=stop_mode=clone:stop_duration=0.15,trim=end_frame=${frames},setpts=N/(30*TB)`,
+          "-c:v", "libx264", "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", file]);
+        normalized.push(file);
+      }
+      await concatVideos(normalized, outputPath);
+      return;
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   }
   if (inputPaths.length === 1) {
     fs.copyFileSync(inputPaths[0], outputPath);

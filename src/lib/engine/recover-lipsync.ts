@@ -256,7 +256,10 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
   // Even a cloud final must be probed; container metadata or a missing report
   // must never stand in for the duration of the actual picture and narration.
   let rawReady = false;
-  if (fs.existsSync(rawPath)) {
+  // An older face-workflow concat may include per-chunk provider padding.
+  // Rebuild from the saved paid results so recovery uses the same timeline as
+  // new generation, even when the old concat passes the loose download check.
+  if (fs.existsSync(rawPath) && !(faceWorkflow && plan.length > 1)) {
     try { await verifyVideoDuration(rawPath, providerDuration); rawReady = true; } catch {}
   }
   if (!faceWorkflow && !rawReady && CosService.isConfigured() && await CosService.objectExists(`jobs/${taskId}/final.mp4`)) {
@@ -312,7 +315,9 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
     else currentChunks.push(completedChunk);
     TaskStore.update(taskId, { results: { lipsyncChunks: currentChunks } });
   }
-  if (!rawReady && plan.length > 1) await concatVideos(rendered, rawPath);
+  if (!rawReady && plan.length > 1) {
+    await concatVideos(rendered, rawPath, faceWorkflow ? plan.map(part => part.durationSeconds) : undefined);
+  }
   await verifyVideoDuration(rawPath, providerDuration);
   const jobId = chunks.map(chunk => chunk.lipsyncId).filter(Boolean).join(",");
 

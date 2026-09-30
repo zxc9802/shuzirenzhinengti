@@ -45,7 +45,7 @@ export async function prepareFaceLipsync(params: {
   // Persist the coordinate/time mapping and base picture before a paid job can
   // start. Recovery must never treat the provider's face crop as a final video.
   if (CosService.isConfigured()) {
-    for (const name of RECOVERY_FILES) {
+    for (const name of [...RECOVERY_FILES, "face-input.mp4"]) {
       await CosService.uploadFile(path.join(params.jobDir, name), `jobs/${params.taskId}/${name}`);
     }
   }
@@ -71,6 +71,13 @@ export async function restoreFaceLipsync(jobDir: string, taskId: string): Promis
     } else {
       await downloadTrustedMediaToFile({ source: await CosService.getDownloadUrl(key), outputPath: file });
     }
+  }
+  // Older jobs did not persist this reference. Keep their existing fallback,
+  // but restore the exact submitted frames whenever they are available.
+  const reference = path.join(jobDir, "face-input.mp4");
+  const referenceKey = `jobs/${taskId}/face-input.mp4`;
+  if (!fs.existsSync(reference) && CosService.isConfigured() && await CosService.objectExists(referenceKey)) {
+    await downloadTrustedMediaToFile({ source: await CosService.getDownloadUrl(referenceKey), outputPath: reference });
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(jobDir, "face-manifest.json"), "utf8"));
   if (manifest.version !== 1 || !Number.isFinite(manifest.durationSeconds) || manifest.durationSeconds <= 0) {

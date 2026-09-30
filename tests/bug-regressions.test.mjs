@@ -193,6 +193,49 @@ test("face workflow recovery retains padding, restores the full frame and cannot
   } finally {s.close();}
 });
 
+test("face recovery rebuilds a stale concat from saved chunks without resubmitting paid work", async () => {
+  const s = sandbox();
+  try {
+    recoveryStubs(s);
+    const {video, audio} = makeMedia(s.tmp, 2);
+    const media = s.load("src/lib/engine/ffmpeg.ts");
+    const plan = [{index: 0, startSeconds: 0, durationSeconds: 1.5},
+      {index: 1, startSeconds: 1.5, durationSeconds: 1.4}];
+    s.overrides.set("src/lib/engine/lipsync-chunks.ts", {planLipsyncChunks: () => plan});
+    s.overrides.set("src/lib/engine/face-lipsync.ts", {
+      restoreFaceLipsync: async () => 2.9,
+      finalizeFaceLipsync: async ({renderedPath, audioPath, outputPath}) => {
+        const probe = await media.probeMedia(renderedPath);
+        assert.ok(Math.abs(probe.videoDurationSeconds - 2.9) < 1 / 30,
+          "Recovery reused the old concat containing cumulative provider padding");
+        return media.finalizeVideo(video, audioPath, outputPath);
+      },
+    });
+    const {TaskStore} = s.load("src/lib/store/task-store.ts");
+    const task = TaskStore.create({...baseTask(), status: "failed", billing: {isExternalUser: false},
+      results: {faceWorkflowVersion: 1, lipsyncChunks: plan.map(part => ({index: part.index,
+        lipsyncId: `paid-${part.index}`, status: "downloaded"}))}});
+    const dir = path.join(s.tmp, ".runtime/jobs", task.id);
+    fs.mkdirSync(path.join(dir, "lipsync-chunks"), {recursive: true});
+    fs.copyFileSync(audio, path.join(dir, "voice-track.wav"));
+    const parts = [];
+    for (const part of plan) {
+      const file = path.join(dir, "lipsync-chunks", `result-${part.index}.mp4`);
+      await media.execMediaCommand("ffmpeg", ["-v", "error", "-f", "lavfi", "-i",
+        `color=c=blue:s=64x64:r=30:d=${part.durationSeconds + 2 / 30}`, "-f", "lavfi", "-i",
+        `anullsrc=r=44100:cl=mono:d=${part.durationSeconds + 0.1}`, "-c:v", "libx264", "-c:a", "libmp3lame", file]);
+      parts.push(file);
+    }
+    const raw = path.join(dir, "rendered-source.mp4");
+    await media.concatVideos(parts, raw);
+    assert.ok((await media.probeMedia(raw)).videoDurationSeconds - 2.9 > 0.15,
+      "Fixture must reproduce the cumulative padding error");
+    const recovered = await s.load("src/lib/engine/recover-lipsync.ts").recoverStuckLipsyncTask(task.id);
+    assert.equal(recovered.status, "completed");
+    assert.deepEqual(recovered.results.lipsyncChunks.map(chunk => chunk.lipsyncId), ["paid-0", "paid-1"]);
+  } finally {s.close();}
+});
+
 test("B8: cloud recovery must establish duration and all deliverables before settlement", async t => {
   const s = sandbox();
   try {

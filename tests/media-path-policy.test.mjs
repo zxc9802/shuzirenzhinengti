@@ -70,6 +70,18 @@ test("mediaRoots are all absolute and scoped to the working directory", () => {
   assert.ok(roots.includes(`${CWD}/.runtime/jobs`));
 });
 
+test("CosService.getManagedObjectKey permits saved lipsync recovery media", () => {
+  const config = getAppConfig();
+  const host = `${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com`;
+  for (const name of ["face-input.mp4", "lipsync-chunks/result-0.mp4", "lipsync-chunks/result-12.mp4"]) {
+    const key = `jobs/task-recovery/${name}`;
+    assert.equal(CosService.getManagedObjectKey(`https://${host}/${key}`), key);
+  }
+  for (const name of ["face-manifest.json", "lipsync-chunks/result-x.mp4", "lipsync-chunks/other.mp4", "lipsync-chunks/..%2Ffinal.mp4"]) {
+    assert.equal(CosService.getManagedObjectKey(`https://${host}/jobs/task-recovery/${name}`), null);
+  }
+});
+
 test("CosService.getManagedObjectKey only recognises the configured bucket host and rejects traversal", () => {
   const config = getAppConfig();
   const host = `${config.cosBucket}.cos.${config.cosRegion}.myqcloud.com`;

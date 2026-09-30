@@ -202,8 +202,16 @@ def composite(req):
     c = manifest["crop"]
     x, y = round(c["x"] * scale_x), round(c["y"] * scale_y)
     w, h = round(c["size"] * scale_x), round(c["size"] * scale_y)
-    source_thumbs = np.array(list(frames(job / "source-video.mp4", 32, 12,
-                                        extra=f"crop={w}:{h // 4}:{x}:{y}")), dtype=np.float32)
+    reference = job / "face-input.mp4"
+    if reference.exists():
+        # Compare to the exact provider input. Re-cropping the separately
+        # resized full frame adds spatial/loop-rounding differences that look
+        # like temporal drift even when the provider preserved every frame.
+        source_thumbs = np.array(list(frames(reference, 32, 12,
+                                            extra=f"trim=start_frame={round(PREPAD * FPS)},crop=iw:ih/4:0:0")), dtype=np.float32)
+    else:
+        source_thumbs = np.array(list(frames(job / "source-video.mp4", 32, 12,
+                                            extra=f"crop={w}:{h // 4}:{x}:{y}")), dtype=np.float32)
     rendered_thumbs = np.array(list(frames(req["renderedPath"], 32, 12,
                                           extra="crop=iw:ih/4:0:0")), dtype=np.float32)
     offset = frame_offset(source_thumbs, rendered_thumbs, round(PREPAD * FPS))
