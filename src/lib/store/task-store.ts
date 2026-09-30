@@ -85,6 +85,7 @@ export interface TaskItem {
     pixverseResultUrl?: string;
     heygenResultUrl?: string;
     veedResultUrl?: string;
+    faceWorkflowVersion?: 1;
     chargedPoints?: number;
     costCny?: number;
     billingDuration?: number;

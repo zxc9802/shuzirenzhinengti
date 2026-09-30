@@ -20,6 +20,11 @@ const PUBLIC_ERRORS: Record<string, string> = {
   BILLING_RESERVATION_TOO_SMALL: "实际配音超出预留额度，请缩短文案后重试",
   BILLING_SETTLEMENT_FAILED: "结果已生成，积分结算暂未完成，请稍后恢复任务",
   MEDIA_FIT_MISMATCH: "素材视频长于配音，请选择智能适配后重试",
+  LIPSYNC_FACE_INPUT: "素材中的人脸过小、被遮挡或移动过大，请使用清晰连续的单人口播视频",
+  LIPSYNC_INPUT_DURATION: "配音过短，无法可靠校准口型，请增加文案内容",
+  LIPSYNC_ALIGNMENT: "生成的嘴型仍有局部不同步，未交付成片，请更换素材或重新生成",
+  LIPSYNC_MEDIA: "人脸合成素材不完整，暂时无法恢复成片",
+  LIPSYNC_RUNTIME: "口型处理服务暂不可用，请稍后重试",
 };
 
 const PUBLIC_LOG_FALLBACK = {

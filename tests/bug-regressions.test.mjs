@@ -125,6 +125,10 @@ test("B7: deleting a provider-committed task must not refund its stale initial r
       const file = path.join(options.outDir, "voice-track.wav"); fs.writeFileSync(file, "fixture");
       return { finalWavPath: file, selectedDuration: 3, rawDuration: 3 };
     } });
+    s.overrides.set("src/lib/engine/face-lipsync.ts", {
+      prepareFaceLipsync: async ({inputVideoPath, audioPath}) => ({videoPath: inputVideoPath, audioPath, durationSeconds: 3.9}),
+      finalizeFaceLipsync: async ({outputPath}) => {fs.writeFileSync(outputPath, "fixture"); return {durationSeconds: 3};},
+    });
     s.overrides.set("src/lib/engine/ffmpeg.ts", {
       probeMedia: async () => ({ width: 160, height: 120, durationSeconds: 3, fps: 30 }),
       sha256File: async () => "fakehash0123456789",
@@ -142,6 +146,51 @@ test("B7: deleting a provider-committed task must not refund its stale initial r
     t.diagnostic(JSON.stringify({ calls, recordExists: Boolean(TaskStore.get(task.id)) }));
     assert.equal(calls.includes("release"), false, "Deletion makes pipeline fall back to the old reserved state and refund accepted paid work");
   } finally { s.close(); }
+});
+
+test("face workflow recovery retains padding, restores the full frame and cannot bypass alignment failure", async () => {
+  const s = sandbox();
+  try {
+    recoveryStubs(s);
+    const { video, audio } = makeMedia(s.tmp);
+    const raw = path.join(s.tmp, "padded-provider.mp4");
+    const padded = spawnSync("ffmpeg", ["-v", "error", "-i", video, "-vf", "tpad=stop_mode=clone:stop_duration=0.9", "-an", raw], {encoding: "utf8"});
+    assert.equal(padded.status, 0, padded.stderr);
+    const media = s.load("src/lib/engine/ffmpeg.ts");
+    const calls = [];
+    let rejectAlignment = true;
+    s.overrides.set("src/lib/engine/face-lipsync.ts", {
+      restoreFaceLipsync: async () => {calls.push("restore"); return 3.9;},
+      finalizeFaceLipsync: async ({renderedPath, audioPath, outputPath}) => {
+        assert.ok((await media.probeMedia(renderedPath)).durationSeconds > 3.8);
+        calls.push("composite-and-align");
+        if (rejectAlignment) throw Object.assign(new Error("local timing mismatch"), {code: "LIPSYNC_ALIGNMENT"});
+        return media.finalizeVideo(video, audioPath, outputPath);
+      },
+    });
+    const {TaskStore} = s.load("src/lib/store/task-store.ts");
+    const task = TaskStore.create({...baseTask(), status: "failed", billing: {...baseTask().billing, status: "provider_committed"},
+      results: {faceWorkflowVersion: 1, heygenLipsyncId: "existing-paid-job"}});
+    const dir = path.join(s.tmp, ".runtime/jobs", task.id); fs.mkdirSync(dir, {recursive: true});
+    fs.copyFileSync(raw, path.join(dir, "rendered-source.mp4"));
+    fs.copyFileSync(audio, path.join(dir, "voice-track.wav"));
+    const settlements = [];
+    globalThis.fetch = async (url, init) => {
+      assert.ok(String(url).endsWith("/api/sso/billing")); settlements.push(JSON.parse(init.body));
+      return Response.json({success: true, data: {pointsBalance: 940}});
+    };
+    const recover = s.load("src/lib/engine/recover-lipsync.ts").recoverStuckLipsyncTask;
+    await assert.rejects(recover(task.id, "fake"), /local timing mismatch/);
+    assert.equal(TaskStore.get(task.id).errorCode, "LIPSYNC_ALIGNMENT");
+    assert.equal(TaskStore.get(task.id).status, "failed");
+    assert.equal(settlements.length, 0);
+    rejectAlignment = false;
+    const result = await recover(task.id, "fake");
+    assert.equal(result.status, "completed");
+    assert.deepEqual(calls, ["restore", "composite-and-align", "restore", "composite-and-align"]);
+    assert.equal(settlements.length, 1);
+    assert.equal(settlements[0].billableUnits, 3, "padding must not extend delivered speech billing");
+  } finally {s.close();}
 });
 
 test("B8: cloud recovery must establish duration and all deliverables before settlement", async t => {

@@ -17,6 +17,7 @@ import {
 import { HeyGenMcpAdapter } from "../mcp/heygen-adapter";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
+import { prepareFaceLipsync, finalizeFaceLipsync } from "./face-lipsync";
 import { CosService } from "../cos";
 import { resolveLipsyncProvider } from "../lipsync-provider";
 import { resolveAllowedLocalMediaPath } from "../media-path-policy";
@@ -306,6 +307,23 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       "heygen"
     );
 
+    let providerVideoPath = preparedVideoPath;
+    let providerAudioPath = ttsResult.finalWavPath;
+    if (lipsyncProvider === "veed") {
+      log("正在从高清原片准备人脸近景，并为配音添加首尾缓冲...");
+      const faceInputs = await prepareFaceLipsync({
+        inputVideoPath: localVideoPath,
+        audioPath: ttsResult.finalWavPath,
+        durationSeconds: ttsResult.selectedDuration,
+        jobDir,
+        taskId,
+      });
+      ensureTaskActive();
+      providerVideoPath = faceInputs.videoPath;
+      providerAudioPath = faceInputs.audioPath;
+      TaskStore.update(taskId, { results: { faceWorkflowVersion: 1 } });
+    }
+
     currentStep = "mcp_preflight";
     TaskStore.update(taskId, {
       step: "mcp_preflight",
@@ -319,8 +337,8 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
     )}`;
 
     // Create short-lived, unguessable provider inputs. They are removed in finally.
-    fs.copyFileSync(preparedVideoPath, path.join(providerInputDir, "source-video.mp4"));
-    fs.copyFileSync(ttsResult.finalWavPath, path.join(providerInputDir, "voice-track.wav"));
+    fs.copyFileSync(providerVideoPath, path.join(providerInputDir, "source-video.mp4"));
+    fs.copyFileSync(providerAudioPath, path.join(providerInputDir, "voice-track.wav"));
     let publicVideoUrl = `${baseUrl}/jobs/input/${providerToken}/source-video.mp4`;
     let publicAudioUrl = `${baseUrl}/jobs/input/${providerToken}/voice-track.wav`;
 
@@ -331,9 +349,9 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
         log("☁️ 正在将预处理音画直链同步至云端高速分发...", "info");
         const providerVideoKey = `provider-input/${providerToken}/source-video.mp4`;
         const providerAudioKey = `provider-input/${providerToken}/voice-track.wav`;
-        await CosService.uploadFile(preparedVideoPath, providerVideoKey);
+        await CosService.uploadFile(providerVideoPath, providerVideoKey);
         providerCosKeys.push(providerVideoKey);
-        await CosService.uploadFile(ttsResult.finalWavPath, providerAudioKey);
+        await CosService.uploadFile(providerAudioPath, providerAudioKey);
         providerCosKeys.push(providerAudioKey);
         publicVideoUrl = await CosService.getDownloadUrl(providerVideoKey, undefined, 6 * 60 * 60);
         publicAudioUrl = await CosService.getDownloadUrl(providerAudioKey, undefined, 6 * 60 * 60);
@@ -414,11 +432,11 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
 
       heygenResult = await FalVeedLipsyncAdapter.execute(
         {
-          videoPath: preparedVideoPath,
-          audioPath: ttsResult.finalWavPath,
+          videoPath: providerVideoPath,
+          audioPath: providerAudioPath,
           videoUrl: publicVideoUrl,
           audioUrl: publicAudioUrl,
-          objectKeyPrefix: `jobs/${taskId}`,
+          objectKeyPrefix: `jobs/${taskId}/face-provider`,
           onLog: logProvider,
           onChunkProgress: recordChunk,
           onProviderAccepted: markProviderCommitted,
@@ -490,12 +508,14 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       step: "finalize",
       progress: 85,
     });
-    log("🎧 第五步: 正在将生成的对口型视频与原声 WAV 音轨无损混流封装...");
+    log(lipsyncProvider === "veed" ? "正在将嘴型合回原画面，并校准配音时间..." : "🎧 第五步: 正在将生成的对口型视频与原声 WAV 音轨无损混流封装...");
 
     const heygenDownloadedPath = path.join(jobDir, "rendered-source.mp4");
     const finalVideoPath = path.join(jobDir, "final.mp4");
 
-    const finalProbe = await finalizeVideo(
+    const finalProbe = lipsyncProvider === "veed" ? await finalizeFaceLipsync({
+      jobDir, renderedPath: heygenDownloadedPath, audioPath: ttsResult.finalWavPath, outputPath: finalVideoPath,
+    }) : await finalizeVideo(
       heygenDownloadedPath,
       ttsResult.finalWavPath,
       finalVideoPath
@@ -527,7 +547,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
           sha256: sha256Audio,
         },
       },
-      processing: { status: "completed" },
+      processing: { status: "completed", lipsync_alignment_checked: lipsyncProvider === "veed" || undefined },
     };
 
     const evidencePath = path.join(jobDir, "production-report.json");

@@ -8,6 +8,7 @@ import { planLipsyncChunks } from "./lipsync-chunks";
 import { withTaskExecution } from "./task-execution";
 import { downloadFileToDisk } from "./download-file";
 import { FalVeedLipsyncAdapter } from "./fal-veed-lipsync";
+import { restoreFaceLipsync, finalizeFaceLipsync } from "./face-lipsync";
 import { downloadPixverseResult } from "./pixverse-ingest";
 import { OpenLuxLipsyncAdapter } from "./openlux-lipsync";
 import {
@@ -197,7 +198,8 @@ export async function recoverStuckLipsyncTask(
       return await recoverTask(taskId, sessionToken);
     } catch (error) {
       TaskStore.update(taskId, { status: "failed", step: "error", failedStep: "finalize",
-        error: "成片恢复未完成，请稍后重试" });
+        error: "成片恢复未完成，请稍后重试",
+        errorCode: (error as { code?: string })?.code });
       throw error;
     }
   });
@@ -236,6 +238,8 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
   const log = (msg: string) => TaskStore.addLog(taskId, msg, "info", "正在恢复成片，请稍候");
 
   TaskStore.update(taskId, { status: "processing", step: "finalize", progress: 85, error: undefined });
+  const faceWorkflow = task.results.faceWorkflowVersion === 1;
+  const faceDuration = faceWorkflow ? await restoreFaceLipsync(jobDir, taskId) : undefined;
   await ensureLocalFile({
     localPath: audioPath,
     cosKey: `jobs/${taskId}/voice-track.wav`,
@@ -244,17 +248,18 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
     onLog: log,
   });
   const audioProbe = await probeMedia(audioPath);
+  const providerDuration = faceDuration ?? audioProbe.durationSeconds;
   const plan = provider === "heygen"
     ? [{ index: 0, durationSeconds: audioProbe.durationSeconds }]
-    : planLipsyncChunks(audioProbe.durationSeconds);
+    : planLipsyncChunks(providerDuration);
   const chunks = savedChunks(task);
   // Even a cloud final must be probed; container metadata or a missing report
   // must never stand in for the duration of the actual picture and narration.
   let rawReady = false;
   if (fs.existsSync(rawPath)) {
-    try { await verifyVideoDuration(rawPath, audioProbe.durationSeconds); rawReady = true; } catch {}
+    try { await verifyVideoDuration(rawPath, providerDuration); rawReady = true; } catch {}
   }
-  if (!rawReady && CosService.isConfigured() && await CosService.objectExists(`jobs/${taskId}/final.mp4`)) {
+  if (!faceWorkflow && !rawReady && CosService.isConfigured() && await CosService.objectExists(`jobs/${taskId}/final.mp4`)) {
     const url = await CosService.getDownloadUrl(`jobs/${taskId}/final.mp4`, "final.mp4");
     await downloadTrustedMediaToFile({ source: url, outputPath: rawPath });
     try { await verifyVideoDuration(rawPath, audioProbe.durationSeconds); rawReady = true; } catch {}
@@ -308,11 +313,13 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
     TaskStore.update(taskId, { results: { lipsyncChunks: currentChunks } });
   }
   if (!rawReady && plan.length > 1) await concatVideos(rendered, rawPath);
-  await verifyVideoDuration(rawPath, audioProbe.durationSeconds);
+  await verifyVideoDuration(rawPath, providerDuration);
   const jobId = chunks.map(chunk => chunk.lipsyncId).filter(Boolean).join(",");
 
   log("正在将成片与原声音轨混流封装...");
-  const finalProbe = await finalizeVideo(rawPath, audioPath, finalPath);
+  const finalProbe = faceWorkflow ? await finalizeFaceLipsync({
+    jobDir, renderedPath: rawPath, audioPath, outputPath: finalPath,
+  }) : await finalizeVideo(rawPath, audioPath, finalPath);
   await verifyVideoDuration(finalPath, audioProbe.durationSeconds);
   const sha256Video = await sha256File(finalPath);
   const sha256Audio = await sha256File(audioPath);
@@ -326,7 +333,7 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
     created_at: new Date().toISOString(),
     recovered: true,
     script_text: task.inputs.scriptText,
-    processing: { status: "completed", recovered: true },
+    processing: { status: "completed", recovered: true, lipsync_alignment_checked: faceWorkflow || undefined },
     media: {
       video: {
         final_duration_seconds: finalProbe.durationSeconds,

@@ -44,6 +44,7 @@ yarn-error.log*
 *.pem
 *.zip
 *.tsbuildinfo
+__pycache__/
 
 # Bundled Remotion template
 .motion-bundle/

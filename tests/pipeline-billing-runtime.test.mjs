@@ -36,7 +36,7 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       const generated = spawnSync("ffmpeg", ["-v", "error", ...args], {encoding: "utf8"});
       assert.equal(generated.status, 0, generated.stderr);
     }
-    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage"]) {
+    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage", "face-prep-failure", "face-sync-failure"]) {
       const audioOnly = scenario.startsWith("audio-");
       const events = [];
       globalThis.fetch = async (url, init) => {
@@ -72,11 +72,34 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
           return {finalWavPath: wav, rawDuration: duration, selectedDuration: duration};
         }},
         "./ffmpeg": {...media, finalizeVideo: async (_video, _audio, output) => {
+          assert.equal(audioOnly, true, "VEED must use the face workflow finalizer");
           fs.writeFileSync(output, "fixture"); return {durationSeconds: duration, width: 160, height: 120, fps: 30};
         }},
+        "./face-lipsync": {
+          prepareFaceLipsync: async ({inputVideoPath, jobDir}) => {
+            events.push({stage: "face-prep"});
+            assert.equal(inputVideoPath, scenario === "silent-smart" ? silent : sound);
+            if (scenario === "face-prep-failure") throw Object.assign(new Error("face too small"), {code: "LIPSYNC_FACE_INPUT"});
+            const videoPath = path.join(jobDir, "face-input.mp4");
+            const audioPath = path.join(jobDir, "face-audio.wav");
+            fs.writeFileSync(videoPath, "face-crop"); fs.writeFileSync(audioPath, "padded-voice");
+            return {videoPath, audioPath, durationSeconds: duration + 0.9};
+          },
+          finalizeFaceLipsync: async ({outputPath}) => {
+            events.push({stage: "face-finalize"});
+            if (scenario === "face-sync-failure") throw Object.assign(new Error("sync mismatch"), {code: "LIPSYNC_ALIGNMENT"});
+            fs.writeFileSync(outputPath, "fixture");
+            return {durationSeconds: duration, width: 160, height: 120, fps: 30};
+          },
+        },
         "../mcp/heygen-adapter": {HeyGenMcpAdapter: {}},
         "./openlux-lipsync": {OpenLuxLipsyncAdapter: {}},
         "./fal-veed-lipsync": {FalVeedLipsyncAdapter: {execute: async options => {
+          assert.match(options.videoPath, /face-input\.mp4$/);
+          assert.match(options.audioPath, /face-audio\.wav$/);
+          assert.match(options.objectKeyPrefix, /\/face-provider$/, "fallback uploads must not overwrite the full-frame recovery base or original voice");
+          assert.equal(fs.readFileSync(options.videoPath, "utf8"), "face-crop");
+          assert.equal(fs.readFileSync(options.audioPath, "utf8"), "padded-voice");
           events.push({stage: "lipsync"}); options.onProviderAccepted();
           options.onJobCreated({lipsyncId: "test-job"});
           return {lipsyncId: "test-job", status: "completed"};
@@ -99,18 +122,25 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       }, module, module.exports);
       await module.exports.runDigitalHumanPipeline(scenario, "fake");
       if (audioOnly) assert.equal(events.some(e => e.stage === "lipsync"), false, "audio must never submit paid lip-sync");
-      if (scenario.endsWith("under-reserved") || scenario === "preserve-failure" || scenario === "setup-failure") {
+      if (scenario.endsWith("under-reserved") || scenario === "preserve-failure" || scenario === "setup-failure" || scenario === "face-prep-failure") {
         assert.equal(events.some(e => e.stage === "lipsync"), false, scenario);
         assert.equal(task.status, "failed", scenario);
         assert.equal(task.billing.status, "released", scenario);
         assert.equal(isTaskOutputDeliverable(task), false, scenario);
         if (scenario.endsWith("under-reserved")) assert.equal(task.errorCode, "BILLING_RESERVATION_TOO_SMALL");
         if (scenario === "setup-failure") assert.equal(events.some(e => e.stage === "tts"), false);
+      } else if (scenario === "face-sync-failure") {
+        assert.equal(task.status, "failed");
+        assert.equal(task.errorCode, "LIPSYNC_ALIGNMENT");
+        assert.equal(task.billing.status, "provider_committed");
+        assert.equal(events.some(e => e.action === "settle" || e.action === "release"), false);
+        assert.equal(isTaskOutputDeliverable(task), false);
       } else if (scenario.endsWith("settle-outage")) {
         assert.equal(task.billing.status, "settle_pending");
         assert.equal(events.some(e => e.action === "release"), false);
         assert.equal(isTaskOutputDeliverable(task), false);
       } else {
+        if (!audioOnly) assert.deepEqual(events.filter(e => e.stage.startsWith("face-")).map(e => e.stage), ["face-prep", "face-finalize"]);
         assert.equal(task.status, "completed", `${scenario}: ${task.error}`);
         assert.equal(isTaskOutputDeliverable(task), true);
         assert.equal(events.filter(e => e.action === "settle").length, scenario === "internal-success" ? 0 : 1);
