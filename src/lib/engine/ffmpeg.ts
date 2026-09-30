@@ -10,6 +10,7 @@ export interface MediaProbeInfo {
   width?: number;
   height?: number;
   displayAspectRatio?: string;
+  sampleAspectRatio?: string;
   fps?: number;
   videoCodec?: string;
   hasAudio: boolean;
@@ -117,7 +118,7 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
     "-v",
     "error",
     "-show_entries",
-    "format=duration,size,bit_rate:stream=index,codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels,duration:stream_tags=rotate:stream_side_data=rotation",
+    "format=duration,size,bit_rate:stream=index,codec_type,codec_name,width,height,display_aspect_ratio,sample_aspect_ratio,r_frame_rate,sample_rate,channels,duration:stream_tags=rotate:stream_side_data=rotation",
     "-of",
     "json",
     filePath,
@@ -134,6 +135,8 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
 
   let width: number | undefined;
   let height: number | undefined;
+  let displayAspectRatio: string | undefined;
+  let sampleAspectRatio: string | undefined;
   let fps: number | undefined;
   let videoCodec: string | undefined;
   let hasAudio = false;
@@ -146,6 +149,8 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
     if (stream.codec_type === "video" && width === undefined) {
       width = parseInt(stream.width, 10);
       height = parseInt(stream.height, 10);
+      displayAspectRatio = stream.display_aspect_ratio;
+      sampleAspectRatio = stream.sample_aspect_ratio;
       videoCodec = stream.codec_name;
       const streamDuration = Number(stream.duration);
       if (Number.isFinite(streamDuration) && streamDuration > 0) videoDurationSeconds = streamDuration;
@@ -174,6 +179,8 @@ export async function probeMedia(filePath: string): Promise<MediaProbeInfo> {
     videoDurationSeconds,
     width,
     height,
+    displayAspectRatio,
+    sampleAspectRatio,
     fps,
     videoCodec,
     hasAudio,
@@ -231,6 +238,13 @@ export async function prepareSourceVideo(
   let targetWidth = probe.width;
   let targetHeight = probe.height;
 
+  // FFmpeg autorotates the pixels before scaling; size the output for that display.
+  const [sarWidth, sarHeight] = (probe.sampleAspectRatio || "1:1").split(":").map(Number);
+  if (sarWidth > 0 && sarHeight > 0) targetWidth = Math.round(targetWidth * sarWidth / sarHeight);
+  if (Math.abs(probe.rotation || 0) % 180 === 90) {
+    [targetWidth, targetHeight] = [targetHeight, targetWidth];
+  }
+
   // Scale down if larger than 1920
   if (Math.max(targetWidth, targetHeight) > maxEdge) {
     if (targetWidth >= targetHeight) {
@@ -247,7 +261,7 @@ export async function prepareSourceVideo(
   targetHeight = targetHeight % 2 === 0 ? targetHeight : targetHeight - 1;
 
   // Video filter: scale and set 30 fps
-  const vf = `scale=${targetWidth}:${targetHeight}:flags=lanczos,fps=30,format=yuv420p`;
+  const vf = `scale=${targetWidth}:${targetHeight}:flags=lanczos,setsar=1,fps=30,format=yuv420p`;
 
   const args: string[] = ["-hide_banner", "-loglevel", "error", "-y"];
 

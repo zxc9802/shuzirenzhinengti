@@ -38,6 +38,10 @@ export default function PlayerComparison({
   const originalRef = useRef<HTMLVideoElement>(null);
   const finalRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [originalAspectRatio, setOriginalAspectRatio] = useState(0);
+  const [finalAspectRatio, setFinalAspectRatio] = useState(0);
+  const [width, height] = String(metadata?.resolution || "").split("x").map(Number);
+  const fallbackAspectRatio = width > 0 && height > 0 ? width / height : 9 / 16;
   const [activeTab, setActiveTab] = useState<"side-by-side" | "result-only">(
     "side-by-side"
   );
@@ -149,13 +153,17 @@ export default function PlayerComparison({
                 原片源
               </span>
             </div>
-            <div className="relative aspect-[9/16] md:aspect-video w-full overflow-hidden rounded-2xl bg-black border border-white/[0.08] shadow-inner flex items-center justify-center">
+            <div style={{ aspectRatio: originalAspectRatio || fallbackAspectRatio }} className="relative w-full overflow-hidden rounded-2xl bg-black border border-white/[0.08] shadow-inner flex items-center justify-center">
               {originalVideoUrl ? (
                 <video
                   ref={originalRef}
                   src={originalVideoUrl}
                   className="h-full w-full object-contain"
                   playsInline
+                  onLoadedMetadata={(e) => {
+                    const video = e.currentTarget;
+                    if (video.videoWidth && video.videoHeight) setOriginalAspectRatio(video.videoWidth / video.videoHeight);
+                  }}
                   onTimeUpdate={(e) => {
                     if (
                       Math.abs(
@@ -188,7 +196,7 @@ export default function PlayerComparison({
               高保真原声音轨绑定
             </span>
           </div>
-          <div className="relative aspect-[9/16] md:aspect-video w-full overflow-hidden rounded-2xl bg-black border border-emerald-500/40 shadow-xl flex items-center justify-center">
+          <div style={{ aspectRatio: finalAspectRatio || fallbackAspectRatio }} className="relative w-full overflow-hidden rounded-2xl bg-black border border-emerald-500/40 shadow-xl flex items-center justify-center">
             {finalVideoUrl ? (
               <video
                 ref={finalRef}
@@ -196,6 +204,10 @@ export default function PlayerComparison({
                 className="h-full w-full object-contain"
                 controls
                 playsInline
+                onLoadedMetadata={(e) => {
+                  const video = e.currentTarget;
+                  if (video.videoWidth && video.videoHeight) setFinalAspectRatio(video.videoWidth / video.videoHeight);
+                }}
                 onPlay={() => {
                   originalRef.current?.play();
                   setIsPlaying(true);
