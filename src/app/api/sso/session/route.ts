@@ -8,6 +8,7 @@ import {
   createRestrictedGraceSession,
   createMainAppSessionCookie,
   isSsoConfigured,
+  getMainAppUrl,
 } from "@/lib/main-app-sso";
 import {
   isExternallyBilledUser,
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
           ratePerSecond: POINTS_PER_SECOND,
           cnyPerSecond: CNY_PER_SECOND,
           isExternal: isExternallyBilledUser(devUser),
+          rechargeUrl: null,
         },
       },
     });
@@ -68,6 +70,7 @@ export async function GET(request: NextRequest) {
           ratePerSecond: POINTS_PER_SECOND,
           cnyPerSecond: CNY_PER_SECOND,
           isExternal,
+          rechargeUrl: isExternal ? new URL("/profile", getMainAppUrl()).toString() : null,
         },
         ssoValidation: usesValidationGrace ? "grace" : "valid",
       },

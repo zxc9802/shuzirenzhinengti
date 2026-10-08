@@ -49,6 +49,7 @@ export default function StudioPage() {
   const [loading, setLoading] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [insufficientPoints, setInsufficientPoints] = useState(false);
   const [userSession, setUserSession] = useState<{ user?: any; billing?: any } | null>(null);
   const [videoInputKey, setVideoInputKey] = useState(0);
 
@@ -164,6 +165,31 @@ export default function StudioPage() {
     restoreTask();
   }, []);
 
+  useEffect(() => {
+    const refreshSession = async () => {
+      try {
+        const response = await fetch(`/api/session?t=${Date.now()}`, { cache: "no-store" });
+        if (response.ok) {
+          const json = await response.json();
+          setUserSession(json.data ?? null);
+          if (insufficientPoints) setError(null);
+          setInsufficientPoints(false);
+        } else if (response.status === 401) setUserSession(null);
+      } catch {
+        // Keep the current session when the main site is temporarily unavailable.
+      }
+    };
+    const refreshVisibleSession = () => {
+      if (document.visibilityState === "visible") refreshSession();
+    };
+    window.addEventListener("focus", refreshSession);
+    document.addEventListener("visibilitychange", refreshVisibleSession);
+    return () => {
+      window.removeEventListener("focus", refreshSession);
+      document.removeEventListener("visibilitychange", refreshVisibleSession);
+    };
+  }, [insufficientPoints]);
+
   // 2. Continuous real-time status poller
   useEffect(() => {
     const activeId = currentTask?.id || localStorage.getItem(ACTIVE_TASK_KEY);
@@ -204,6 +230,7 @@ export default function StudioPage() {
   }, [currentTask?.id, currentTask?.status]);
 
   const handleStartPipeline = async () => {
+    setInsufficientPoints(false);
     if (!videoData?.avatarId && !selectedVoice) {
       setError("请先选择配音音色");
       return;
@@ -233,6 +260,7 @@ export default function StudioPage() {
 
       if (!resp.ok) {
         const errJson = await resp.json();
+        setInsufficientPoints(resp.status === 402);
         throw new Error(errJson.error || "创建任务失败");
       }
 
@@ -250,6 +278,7 @@ export default function StudioPage() {
     localStorage.removeItem(ACTIVE_TASK_KEY);
     setCurrentTask(null);
     setError(null);
+    setInsufficientPoints(false);
   };
 
   const isRunning =
@@ -262,6 +291,7 @@ export default function StudioPage() {
     if (!currentTask?.id || recovering) return;
     setRecovering(true);
     setError(null);
+    setInsufficientPoints(false);
     try {
       const resp = await fetch(`/api/tasks/${currentTask.id}/recover`, {
         method: "POST",
@@ -414,7 +444,12 @@ export default function StudioPage() {
                           ? userBalance.toLocaleString()
                           : 0}{" "}
                         积分) 不足，本次需预留 {reservedPoints.toLocaleString()}{" "}
-                        积分，请先前往主站充值。
+                        积分，请先充值。
+                        {userSession?.billing?.rechargeUrl && (
+                          <a href={userSession.billing.rechargeUrl} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold underline underline-offset-2 hover:text-white">
+                            积分充值
+                          </a>
+                        )}
                       </span>
                     </div>
                   )}
@@ -585,6 +620,11 @@ export default function StudioPage() {
             <div className="flex items-center gap-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 p-3.5 text-xs text-rose-300">
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
               <span>{error}</span>
+              {insufficientPoints && userSession?.billing?.isExternal && userSession.billing.rechargeUrl && (
+                <a href={userSession.billing.rechargeUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 font-semibold underline underline-offset-2 hover:text-white">
+                  积分充值
+                </a>
+              )}
             </div>
           )}
 

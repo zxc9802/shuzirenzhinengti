@@ -21,6 +21,7 @@ interface SessionData {
     ratePerSecond: number;
     cnyPerSecond: number;
     isExternal: boolean;
+    rechargeUrl?: string | null;
   };
 }
 
@@ -48,7 +49,16 @@ export default function Navbar() {
     if (isAuthPage) return;
     fetchSession();
     const interval = setInterval(fetchSession, 15000);
-    return () => clearInterval(interval);
+    const refreshVisibleSession = () => {
+      if (document.visibilityState === "visible") fetchSession();
+    };
+    window.addEventListener("focus", fetchSession);
+    document.addEventListener("visibilitychange", refreshVisibleSession);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", fetchSession);
+      document.removeEventListener("visibilitychange", refreshVisibleSession);
+    };
   }, [isAuthPage]);
 
   const logout = async () => {
@@ -143,6 +153,18 @@ export default function Navbar() {
                 {session.user.nickname || session.user.account}
               </span>
             </div>
+          )}
+          {session?.user && isExternal && session.billing?.rechargeUrl && (
+            <a
+              href={session.billing.rechargeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="在新窗口打开主站积分充值"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-400/20 bg-amber-400/10 px-2.5 py-2 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-400/20"
+            >
+              <Coins className="h-3.5 w-3.5" />
+              积分充值
+            </a>
           )}
           {session?.authMode === "standalone" && (
             <div className="flex items-center gap-1">
