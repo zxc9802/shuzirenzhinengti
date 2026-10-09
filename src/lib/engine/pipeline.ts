@@ -352,12 +352,18 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
         log("☁️ 正在将预处理音画直链同步至云端高速分发...", "info");
         const providerVideoKey = `provider-input/${providerToken}/source-video.mp4`;
         const providerAudioKey = `provider-input/${providerToken}/voice-track.wav`;
-        await CosService.uploadFile(providerVideoPath, providerVideoKey);
-        providerCosKeys.push(providerVideoKey);
-        await CosService.uploadFile(providerAudioPath, providerAudioKey);
-        providerCosKeys.push(providerAudioKey);
-        publicVideoUrl = await CosService.getDownloadUrl(providerVideoKey, undefined, 6 * 60 * 60);
-        publicAudioUrl = await CosService.getDownloadUrl(providerAudioKey, undefined, 6 * 60 * 60);
+        const uploads = await Promise.allSettled([
+          [providerVideoPath, providerVideoKey], [providerAudioPath, providerAudioKey],
+        ].map(async ([file, key]) => {
+          await CosService.uploadFile(file, key);
+          providerCosKeys.push(key);
+        }));
+        const failed = uploads.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
+        [publicVideoUrl, publicAudioUrl] = await Promise.all([
+          CosService.getDownloadUrl(providerVideoKey, undefined, 6 * 60 * 60),
+          CosService.getDownloadUrl(providerAudioKey, undefined, 6 * 60 * 60),
+        ]);
         ensureTaskActive();
         log("✅ 预处理音视频直链已就绪 (云端存储)", "success");
       } catch (cosErr: any) {
@@ -518,6 +524,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
 
     const finalProbe = lipsyncProvider === "veed" ? await finalizeFaceLipsync({
       jobDir, renderedPath: heygenDownloadedPath, audioPath: ttsResult.finalWavPath, outputPath: finalVideoPath,
+      onLog: (message) => { ensureTaskActive(); log(message); },
     }) : await finalizeVideo(
       heygenDownloadedPath,
       ttsResult.finalWavPath,

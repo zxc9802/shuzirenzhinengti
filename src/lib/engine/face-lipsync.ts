@@ -45,9 +45,10 @@ export async function prepareFaceLipsync(params: {
   // Persist the coordinate/time mapping and base picture before a paid job can
   // start. Recovery must never treat the provider's face crop as a final video.
   if (CosService.isConfigured()) {
-    for (const name of [...RECOVERY_FILES, "face-input.mp4"]) {
-      await CosService.uploadFile(path.join(params.jobDir, name), `jobs/${params.taskId}/${name}`);
-    }
+    const uploads = await Promise.allSettled([...RECOVERY_FILES, "face-input.mp4"].map((name) =>
+      CosService.uploadFile(path.join(params.jobDir, name), `jobs/${params.taskId}/${name}`)));
+    const failed = uploads.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
   return {
     videoPath: path.join(params.jobDir, "face-input.mp4"),
@@ -91,16 +92,19 @@ export async function finalizeFaceLipsync(params: {
   renderedPath: string;
   audioPath: string;
   outputPath: string;
+  onLog?: (message: string) => void;
 }) {
   // Publish only after both compositing and the final AV measurement succeed.
   const candidate = path.join(params.jobDir, "face-final-candidate.mp4");
   try {
-    await runWorker("composite", params, params.jobDir);
-    await runWorker("align", {
+    const composite = await runWorker("composite", params, params.jobDir);
+    params.onLog?.(`嘴部合成完成，用时 ${composite.elapsedSeconds} 秒，正在校准配音时间...`);
+    const alignment = await runWorker("align", {
       ...params,
       videoPath: path.join(params.jobDir, "face-composited.mp4"),
       outputPath: candidate,
     }, params.jobDir);
+    params.onLog?.(`口型校准通过：初次测量 ${alignment.timingsSeconds.measureBefore} 秒、成片编码 ${alignment.timingsSeconds.encode} 秒、成片复核 ${alignment.timingsSeconds.measureAfter} 秒`);
     fs.renameSync(candidate, params.outputPath);
     return await probeMedia(params.outputPath);
   } finally {

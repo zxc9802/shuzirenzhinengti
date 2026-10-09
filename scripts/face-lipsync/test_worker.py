@@ -4,12 +4,76 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 import wave
+import worker
 
 import numpy as np
 from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offset, prepare, composite
 
 
 class FaceWorkflowTests(unittest.TestCase):
+    def test_sync_face_crop_matches_full_frame_padding_at_image_edges(self):
+        frame = np.random.default_rng(41).integers(0, 256, (240, 320, 3), dtype=np.uint8)
+        for box in [(53, 61, 182, 217), (-19, -13, 113, 165), (211, 170, 369, 283), (-20, -20, 340, 260)]:
+            x1, y1, x2, y2 = box
+            padded = worker.cv2.copyMakeBorder(frame, max(0, -y1), max(0, y2-240), max(0, -x1), max(0, x2-320), worker.cv2.BORDER_CONSTANT)
+            expected = padded[max(0, y1):max(0, y1)+y2-y1, max(0, x1):max(0, x1)+x2-x1]
+            np.testing.assert_array_equal(worker.sync_face_crop(frame, box), expected)
+
+    def test_alignment_reuses_validated_geometry_after_padding_but_still_measures_encoded_candidate(self):
+        data = np.arange(60 * 14, dtype=float).reshape(60, 14)
+        info = {"width": 640, "height": 480, "duration": 2}
+        model = object()
+        measured = []
+        def scores(video, audio, face_track=None, model=None):
+            measured.append((video, audio, face_track, model))
+            return [{"delayMs": -80 if len(measured) == 1 else 0, "confidence": 5}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory) / "candidate.mp4")
+            def encode(args):
+                Path(args[-1]).touch()
+            with patch("worker.load_syncnet", return_value=model) as loaded, \
+                 patch("worker.track", return_value=(info, data)) as tracked, \
+                 patch("worker.sync_scores", side_effect=scores), \
+                 patch("worker.probe", return_value=info), patch("worker.ffmpeg", side_effect=encode):
+                worker.align({"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory})
+            self.assertEqual(loaded.call_count, 1)
+            self.assertEqual(tracked.call_count, 1)
+            self.assertEqual(len(measured), 2, "encoded output still needs complete SyncNet measurement")
+            self.assertEqual(measured[1][:2], (output, output))
+            self.assertIs(measured[0][3], model)
+            self.assertIs(measured[1][3], model)
+            np.testing.assert_array_equal(measured[1][2][1][:2], np.repeat(data[:1], 2, axis=0))
+            np.testing.assert_array_equal(measured[1][2][1][2:], data)
+
+    def test_encoded_candidate_alignment_failure_still_removes_deliverable(self):
+        data = np.ones((60, 14))
+        info = {"width":640, "height":480, "duration":2}
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory)/"candidate.mp4")
+            with patch("worker.load_syncnet", return_value=object()), patch("worker.track", return_value=(info,data)), \
+                 patch("worker.sync_scores", side_effect=[[{"delayMs":0,"confidence":5}], [{"delayMs":80,"confidence":5}]]), \
+                 patch("worker.probe", return_value=info), \
+                 patch("worker.ffmpeg", side_effect=lambda args:Path(args[-1]).touch()):
+                with self.assertRaises(QualityError):
+                    worker.align({"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory})
+            self.assertFalse(Path(output).exists())
+
+    def test_mouth_roi_matches_full_crop_math_pixel_for_pixel(self):
+        rng = np.random.default_rng(37)
+        frame = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+        patch_image = rng.integers(0, 256, (160, 160, 3), dtype=np.uint8)
+        for cx, cy, rx, ry in [(80.3, 92.7, 26.8, 17.5), (4.1, 155.7, 27.2, 16.6), (200, 80, 22, 19)]:
+            yy, xx = np.mgrid[0:160, 0:160]
+            radius = np.sqrt(((xx-cx)/rx)**2 + ((yy-cy)/ry)**2)
+            alpha = np.clip((1-radius)/0.3, 0, 1)
+            alpha = (alpha*alpha*(3-2*alpha))[:, :, None]
+            expected = frame.copy()
+            region = expected[40:200, 60:220]
+            expected[40:200, 60:220] = np.clip(region*(1-alpha)+patch_image*alpha, 0, 255).astype(np.uint8)
+            actual = worker.blend_mouth(frame, patch_image, 60, 40, cx, cy, rx, ry)
+            np.testing.assert_array_equal(actual, expected)
+            np.testing.assert_array_equal(frame[:40], actual[:40])
+
     def test_short_narration_fails_before_model_loading_or_paid_work(self):
         with self.assertRaises(QualityError) as caught:
             prepare({"jobDir": "/unused", "durationSeconds": 0.8})

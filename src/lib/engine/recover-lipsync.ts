@@ -324,6 +324,7 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
   log("正在将成片与原声音轨混流封装...");
   const finalProbe = faceWorkflow ? await finalizeFaceLipsync({
     jobDir, renderedPath: rawPath, audioPath, outputPath: finalPath,
+    onLog: log,
   }) : await finalizeVideo(rawPath, audioPath, finalPath);
   await verifyVideoDuration(finalPath, audioProbe.durationSeconds);
   const sha256Video = await sha256File(finalPath);

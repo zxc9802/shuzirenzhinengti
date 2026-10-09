@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess as sp
 import sys
+import time
 import wave
 
 import cv2
@@ -189,7 +190,25 @@ def frame_offset(source, rendered, prepad_frames):
     return best - 3
 
 
+def blend_mouth(frame, patch, x, y, cx, cy, rx, ry):
+    h, w = patch.shape[:2]
+    left, right = max(0, math.floor(cx - rx)), min(w, math.ceil(cx + rx))
+    top, bottom = max(0, math.floor(cy - ry)), min(h, math.ceil(cy + ry))
+    result = frame.copy()
+    if left >= right or top >= bottom:
+        return result
+    yy, xx = np.mgrid[top:bottom, left:right]
+    radius = np.sqrt(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2)
+    alpha = np.clip((1 - radius) / 0.3, 0, 1)
+    alpha = (alpha * alpha * (3 - 2 * alpha))[:, :, None]
+    region = result[y + top:y + bottom, x + left:x + right]
+    result[y + top:y + bottom, x + left:x + right] = np.clip(
+        region * (1 - alpha) + patch[top:bottom, left:right] * alpha, 0, 255).astype(np.uint8)
+    return result
+
+
 def composite(req):
+    started = time.perf_counter()
     job = Path(req["jobDir"])
     manifest = json.loads((job / "face-manifest.json").read_text())
     base = probe(job / "source-video.mp4")
@@ -216,7 +235,6 @@ def composite(req):
                                           extra="crop=iw:ih/4:0:0")), dtype=np.float32)
     offset = frame_offset(source_thumbs, rendered_thumbs, round(PREPAD * FPS))
     (job / "face-registration.json").write_text(json.dumps({"fixedFrameOffset": offset}))
-    yy, xx = np.mgrid[0:h, 0:w]
     patches = frames(req["renderedPath"], w, h, extra=f"trim=start={PREPAD + offset / FPS},setpts=PTS-STARTPTS")
     encoder = sp.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s",
                         f"{base['width']}x{base['height']}", "-r", str(FPS), "-i", "-", "-an", "-c:v", "libx264",
@@ -232,12 +250,7 @@ def composite(req):
             cx = ((row[10] + row[12]) / 2 - c["x"]) * scale_x
             cy = ((row[11] + row[13]) / 2 - c["y"]) * scale_y
             rx, ry = row[2] * scale_x * 0.42, row[3] * scale_y * 0.28
-            radius = np.sqrt(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2)
-            alpha = np.clip((1 - radius) / 0.3, 0, 1)
-            alpha = (alpha * alpha * (3 - 2 * alpha))[:, :, None]
-            result = frame.copy()
-            region = result[y:y + h, x:x + w]
-            result[y:y + h, x:x + w] = np.clip(region * (1 - alpha) + patch * alpha, 0, 255).astype(np.uint8)
+            result = blend_mouth(frame, patch, x, y, cx, cy, rx, ry)
             encoder.stdin.write(result.tobytes())
             count += 1
     finally:
@@ -247,7 +260,7 @@ def composite(req):
             raise QualityError("Composite encode failed", "LIPSYNC_MEDIA")
     if count < math.floor(manifest["durationSeconds"] * FPS):
         raise QualityError("Composite was truncated", "LIPSYNC_MEDIA")
-    return {"frames": count}
+    return {"frames": count, "elapsedSeconds": round(time.perf_counter() - started, 3)}
 
 
 def load_syncnet():
@@ -260,12 +273,21 @@ def load_syncnet():
     return model
 
 
-def sync_scores(video, audio):
+def sync_face_crop(frame, box):
+    x1, y1, x2, y2 = box
+    height, width = frame.shape[:2]
+    crop = frame[max(0, y1):min(height, y2), max(0, x1):min(width, x2)]
+    return cv2.copyMakeBorder(crop, max(0, -y1), max(0, y2 - height),
+                              max(0, -x1), max(0, x2 - width), cv2.BORDER_CONSTANT)
+
+
+def sync_scores(video, audio, face_track=None, model=None):
     import torch
     import python_speech_features as psf
-    model = load_syncnet()
+    if model is None:
+        model = load_syncnet()
     try:
-        info, data = track(video)
+        info, data = track(video) if face_track is None else face_track
     except QualityError as error:
         raise QualityError(str(error), "LIPSYNC_ALIGNMENT") from error
     pcm = np.frombuffer(ffmpeg(["-i", str(audio), "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]), np.int16)
@@ -285,8 +307,7 @@ def sync_scores(video, audio):
     for i, frame in enumerate(frames(video, info["width"], info["height"], fps=25)):
         cx, cy, bs = boxes[min(round(i * FPS / 25), len(boxes) - 1)]
         x1, y1, x2, y2 = map(int, (cx - bs * 1.4, cy - bs, cx + bs * 1.4, cy + bs * 1.8))
-        padded = cv2.copyMakeBorder(frame, max(0, -y1), max(0, y2 - info["height"]), max(0, -x1), max(0, x2 - info["width"]), cv2.BORDER_CONSTANT)
-        crop = padded[max(0, y1):max(0, y1) + y2 - y1, max(0, x1):max(0, x1) + x2 - x1]
+        crop = sync_face_crop(frame, (x1, y1, x2, y2))
         queue.append(cv2.resize(crop, (224, 224)))
         j = i - 4
         if j < 0 or j * 4 + 20 > mfcc.shape[-1] or (j + 5) * 640 > len(pcm):
@@ -329,8 +350,15 @@ def choose_delay(rows):
 
 
 def align(req):
+    started = time.perf_counter()
     video, audio, output = req["videoPath"], req["audioPath"], req["outputPath"]
-    report = {"version": 1, "before": sync_scores(video, audio)}
+    model = load_syncnet()
+    try:
+        info, data = track(video)
+    except QualityError as error:
+        raise QualityError(str(error), "LIPSYNC_ALIGNMENT") from error
+    report = {"version": 1, "before": sync_scores(video, audio, (info, data), model)}
+    measured_before = time.perf_counter()
     (Path(req["jobDir"]) / "face-sync-report.json").write_text(json.dumps(report, indent=2))
     delay = choose_delay(report["before"])
     # Never remove original narration to advance audio: hold the first video
@@ -342,7 +370,20 @@ def align(req):
             f"[1:a]asetpts=PTS-STARTPTS,adelay={audio_pad * 1000}:all=1[a]",
             "-map", "[v]", "-map", "[a]", "-t", str(target_duration), "-c:v", "libx264", "-threads", "2",
             "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", output])
-    report.update({"appliedDelayMs": delay, "after": sync_scores(output, output)})
+    after_info = probe(output)
+    encoded = time.perf_counter()
+    if (after_info["width"], after_info["height"]) != (info["width"], info["height"]):
+        raise QualityError("Encoded candidate changed frame geometry", "LIPSYNC_ALIGNMENT")
+    # Encoding changes mouth pixels, not face position. Reuse the validated
+    # full-clip track with the exact cloned-frame prefix; both SyncNet passes
+    # still decode their own video/audio and measure every speech window.
+    padded_data = np.concatenate([np.repeat(data[:1], round(video_pad * FPS), axis=0), data])
+    report.update({"appliedDelayMs": delay, "after": sync_scores(output, output, (after_info, padded_data), model)})
+    measured_after = time.perf_counter()
+    report["timingsSeconds"] = {"measureBefore": round(measured_before - started, 3),
+                               "encode": round(encoded - measured_before, 3),
+                               "measureAfter": round(measured_after - encoded, 3),
+                               "total": round(measured_after - started, 3)}
     (Path(req["jobDir"]) / "face-sync-report.json").write_text(json.dumps(report, indent=2))
     residual = choose_delay(report["after"])
     if abs(residual) > 40:
