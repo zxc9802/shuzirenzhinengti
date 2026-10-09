@@ -172,3 +172,18 @@ test("an empty generated segment must fail instead of silently dropping a senten
     assert.equal(fs.existsSync(output), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("nonperiodic audio must remain audible when joining on FFmpeg 5.1", async () => {
+  const { stitchSpeechSegments } = await stitchModule();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-nonperiodic-'));
+  try {
+    const input = path.join(dir, 'input.wav'); const output = path.join(dir, 'joined.wav');
+    await media.execMediaCommand('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i',
+      'anoisesrc=r=22050:a=0.2:d=2:s=12345', '-c:a', 'pcm_s16le', input]);
+    await stitchSpeechSegments([{ text: '这一整段声音必须保留。', audioPath: input }], output);
+    const samples = decode(output);
+    assert.ok(samples.length / 22050 > 1.99, 'audible source must not be erased');
+    const energy = samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length;
+    assert.ok(energy > 1000000, 'output must contain sound, not only padding');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
