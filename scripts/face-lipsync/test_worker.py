@@ -11,6 +11,26 @@ from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offse
 
 
 class FaceWorkflowTests(unittest.TestCase):
+    def test_alignment_uses_full_validated_source_track_in_output_coordinates(self):
+        data = np.arange(60 * 14, dtype=float).reshape(60, 14)
+        info = {"width":640, "height":480, "duration":2}
+        measured = []
+        def scores(video, audio, face_track=None, model=None):
+            measured.append(face_track)
+            return [{"delayMs":0,"confidence":5}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory)/"candidate.mp4")
+            (Path(directory)/"face-manifest.json").write_text(json.dumps({"version":1, "durationSeconds":2,
+                "source":{"width":1280,"height":960}, "track":data.tolist()}))
+            with patch("worker.load_syncnet", return_value=object()), \
+                 patch("worker.track", side_effect=AssertionError("validated source must not be detected again")), \
+                 patch("worker.sync_scores", side_effect=scores), patch("worker.probe", return_value=info), \
+                 patch("worker.ffmpeg", side_effect=lambda args:Path(args[-1]).touch()):
+                worker.align({"videoPath":"video.mp4","audioPath":"voice.wav","outputPath":output,"jobDir":directory})
+            self.assertEqual(len(measured),2)
+            for frame_track in measured:
+                np.testing.assert_array_equal(frame_track[1],data*0.5)
+
     def test_sync_face_crop_matches_full_frame_padding_at_image_edges(self):
         frame = np.random.default_rng(41).integers(0, 256, (240, 320, 3), dtype=np.uint8)
         for box in [(53, 61, 182, 217), (-19, -13, 113, 165), (211, 170, 369, 283), (-20, -20, 340, 260)]:

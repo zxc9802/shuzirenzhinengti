@@ -156,12 +156,13 @@ def prepare(req):
     crop = crop_plan(info, data)
     x, y, size, out = (crop[k] for k in ["x", "y", "size", "outputSize"])
     # Crop BEFORE reducing resolution. FFmpeg autorotates before this filter.
+    # Lower CRF offsets the faster preset's compression loss in facial detail.
     ffmpeg(["-stream_loop", "-1", "-i", req["inputVideoPath"], "-an", "-vf",
             f"scale={info['width']}:{info['height']},setsar=1,fps=30,trim=duration={duration},setpts=PTS-STARTPTS,"
             f"crop={size}:{size}:{x}:{y},scale={out}:{out}:flags=lanczos,"
             f"tpad=start_duration={PREPAD}:stop_duration={POSTPAD}:start_mode=clone:stop_mode=clone",
-            "-t", str(duration + PREPAD + POSTPAD), "-c:v", "libx264", "-threads", "2", "-preset", "fast",
-            "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(job / "face-input.mp4")])
+            "-t", str(duration + PREPAD + POSTPAD), "-c:v", "libx264", "-threads", "2", "-preset", "veryfast",
+            "-crf", "12", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(job / "face-input.mp4")])
     exact_duration = pad_audio(req["audioPath"], job / "face-audio.wav")
     if abs(exact_duration - duration) > 1 / FPS:
         raise QualityError("Narration duration changed", "LIPSYNC_MEDIA")
@@ -238,7 +239,7 @@ def composite(req):
     patches = frames(req["renderedPath"], w, h, extra=f"trim=start={PREPAD + offset / FPS},setpts=PTS-STARTPTS")
     encoder = sp.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s",
                         f"{base['width']}x{base['height']}", "-r", str(FPS), "-i", "-", "-an", "-c:v", "libx264",
-                        "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                        "-threads", "2", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                         str(job / "face-composited.mp4")], stdin=sp.PIPE)
     count = 0
     try:
@@ -354,7 +355,22 @@ def align(req):
     video, audio, output = req["videoPath"], req["audioPath"], req["outputPath"]
     model = load_syncnet()
     try:
-        info, data = track(video)
+        manifest_path = Path(req["jobDir"]) / "face-manifest.json"
+        if manifest_path.exists():
+            # Prepare already checked every native source frame. Composite
+            # preserves those frames and changes only the registered mouth.
+            # Reuse their positions; both complete AV measurements still run.
+            manifest = json.loads(manifest_path.read_text())
+            info = probe(video)
+            data = np.array(manifest["track"], dtype=float)
+            if (manifest["version"] != 1 or data.ndim != 2 or data.shape[1] != 14 or
+                    not np.all(np.isfinite(data)) or len(data) < math.floor(info["duration"] * FPS) or
+                    abs(info["duration"] - manifest["durationSeconds"]) > 1 / FPS):
+                raise QualityError("Validated face track does not cover the composite", "LIPSYNC_ALIGNMENT")
+            data[:, 0::2] *= info["width"] / manifest["source"]["width"]
+            data[:, 1::2] *= info["height"] / manifest["source"]["height"]
+        else:
+            info, data = track(video)
     except QualityError as error:
         raise QualityError(str(error), "LIPSYNC_ALIGNMENT") from error
     report = {"version": 1, "before": sync_scores(video, audio, (info, data), model)}
@@ -369,7 +385,7 @@ def align(req):
             f"[0:v]setpts=PTS-STARTPTS,tpad=start_duration={video_pad}:stop_duration=0.5:start_mode=clone:stop_mode=clone[v];"
             f"[1:a]asetpts=PTS-STARTPTS,adelay={audio_pad * 1000}:all=1[a]",
             "-map", "[v]", "-map", "[a]", "-t", str(target_duration), "-c:v", "libx264", "-threads", "2",
-            "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", output])
+            "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", output])
     after_info = probe(output)
     encoded = time.perf_counter()
     if (after_info["width"], after_info["height"]) != (info["width"], info["height"]):
