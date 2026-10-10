@@ -11,6 +11,61 @@ from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offse
 
 
 class FaceWorkflowTests(unittest.TestCase):
+    def test_looped_source_detects_identical_frames_once_and_keeps_full_track(self):
+        info = {"width":128,"height":128,"duration":1}
+        images = [np.full((128,128,3), i, dtype=np.uint8) for i in range(3)]
+        rows = []
+        class Detector:
+            def detect(self, frame):
+                i = int(frame[0,0,0])
+                row = np.array([20+i,20,80,90,40,40,70,40,55,60,40,80,70,80,.99], dtype=np.float32)
+                rows.append(row[:14])
+                return None, row[None]
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter(images*3)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=Detector()):
+            _, data = worker.track("source.mp4",duration=3,loop=True)
+        self.assertEqual(len(rows),3,"repeated source frames must not rerun face inference")
+        self.assertEqual(len(data),9,"every decoded frame still needs a face position")
+        expected = worker.median_filter(np.tile(np.array(rows),(3,1)),size=(3,1),mode="nearest")
+        np.testing.assert_array_equal(data,expected)
+
+    def test_reused_missing_faces_still_count_every_frame_against_coverage_gate(self):
+        info = {"width":128,"height":128,"duration":1}
+        image = np.zeros((128,128,3),dtype=np.uint8)
+        detector = unittest.mock.Mock()
+        detector.detect.return_value = (None,None)
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter([image]*6)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=detector):
+            with self.assertRaisesRegex(QualityError,"Face missing for more than five frames"):
+                worker.track("source.mp4",duration=3,loop=True)
+        self.assertEqual(detector.detect.call_count,1)
+
+    def test_non_looped_source_still_detects_all_frames(self):
+        info = {"width":128,"height":128,"duration":3}
+        image = np.zeros((128,128,3),dtype=np.uint8)
+        detector = unittest.mock.Mock()
+        detector.detect.return_value = (None,np.array([[20,20,80,90,40,40,70,40,55,60,40,80,70,80,.99]],dtype=np.float32))
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter([image]*6)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=detector):
+            _,data = worker.track("source.mp4",duration=3,loop=False)
+        self.assertEqual(detector.detect.call_count,6)
+        self.assertEqual(len(data),6)
+
+    def test_reused_track_still_rejects_a_jump_at_each_loop_join(self):
+        info = {"width":256,"height":256,"duration":1}
+        images = [np.full((256,256,3),i,dtype=np.uint8) for i in range(3)]
+        detector = unittest.mock.Mock()
+        detector.detect.side_effect = lambda frame:(None,np.array([[int(frame[0,0,0])*30,20,80,90,40,40,70,40,55,60,40,80,70,80,.99]],dtype=np.float32))
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter(images*3)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=detector):
+            with self.assertRaisesRegex(QualityError,"Face track jumps or source contains a cut"):
+                worker.track("source.mp4",duration=3,loop=True)
+        self.assertEqual(detector.detect.call_count,3)
+
     def test_alignment_uses_full_validated_source_track_in_output_coordinates(self):
         data = np.arange(60 * 14, dtype=float).reshape(60, 14)
         info = {"width":640, "height":480, "duration":2}

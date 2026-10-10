@@ -4,6 +4,7 @@ All inputs are local paths supplied by the server. Provider submission remains i
 TypeScript; this worker never accesses the network or retries paid generation.
 """
 import collections
+import hashlib
 import json
 import math
 import os
@@ -87,8 +88,18 @@ def track(file, duration=None, loop=False):
     w, h = int(info["width"] * scale) // 2 * 2, int(info["height"] * scale) // 2 * 2
     detector = cv2.FaceDetectorYN.create(str(MODELS / "yunet.onnx"), "", (w, h), 0.75)
     rows, gap = [], 0
+    repeated = {} if loop and duration is not None and duration > info["duration"] else None
     for frame in frames(file, w, h, duration=duration, loop=loop):
-        _, found = detector.detect(frame)
+        # Reuse only byte-identical decoded frames. This also handles VFR loop
+        # boundaries without guessing frame indices; every quality gate below
+        # still checks the complete output track, including each loop join.
+        key = hashlib.sha256(frame).digest() if repeated is not None else None
+        if repeated is not None and key in repeated:
+            found = repeated[key]
+        else:
+            _, found = detector.detect(frame)
+            if repeated is not None:
+                repeated[key] = None if found is None else found.copy()
         if found is None:
             rows.append(None)
             gap += 1
