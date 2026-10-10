@@ -11,6 +11,39 @@ from worker import QualityError, choose_delay, crop_plan, pad_audio, frame_offse
 
 
 class FaceWorkflowTests(unittest.TestCase):
+    def test_multiple_faces_keep_the_initial_largest_face_when_order_and_sizes_change(self):
+        info = {"width":360,"height":360,"duration":1}
+        images = [np.full((360,360,3),i,dtype=np.uint8) for i in range(6)]
+        expected = []
+        def detect(frame):
+            i = int(frame[0,0,0])
+            primary = [20+i,20,80,90,40,40,70,40,55,60,40,80,70,80,.94]
+            secondary = [220,20,50 if i == 0 else 120,130,240,40,270,40,255,60,240,80,270,80,.99]
+            expected.append(primary[:14])
+            found = [secondary,primary] if i % 2 == 0 else [primary,secondary]
+            return None,np.array(found,dtype=np.float32)
+        detector = unittest.mock.Mock()
+        detector.detect.side_effect = detect
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter(images)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=detector):
+            _,data = worker.track("source.mp4",duration=1)
+        np.testing.assert_allclose(data,expected)
+
+    def test_main_face_selection_survives_a_short_detection_gap(self):
+        info = {"width":360,"height":360,"duration":1}
+        image = np.zeros((360,360,3),dtype=np.uint8)
+        primary = [20,20,80,90,40,40,70,40,55,60,40,80,70,80,.94]
+        secondary = [220,20,120,130,240,40,270,40,255,60,240,80,270,80,.99]
+        detector = unittest.mock.Mock()
+        detector.detect.side_effect = [(None,np.array([primary],dtype=np.float32)),(None,None)] + \
+            [(None,np.array([secondary,primary],dtype=np.float32))]*19
+        with patch("worker.probe",return_value=info), \
+             patch("worker.frames",return_value=iter([image]*21)), \
+             patch("worker.cv2.FaceDetectorYN.create",return_value=detector):
+            _,data = worker.track("source.mp4",duration=1)
+        np.testing.assert_allclose(data,np.tile(primary[:14],(21,1)))
+
     def test_looped_source_detects_identical_frames_once_and_keeps_full_track(self):
         info = {"width":128,"height":128,"duration":1}
         images = [np.full((128,128,3), i, dtype=np.uint8) for i in range(3)]

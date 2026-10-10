@@ -88,6 +88,7 @@ def track(file, duration=None, loop=False):
     w, h = int(info["width"] * scale) // 2 * 2, int(info["height"] * scale) // 2 * 2
     detector = cv2.FaceDetectorYN.create(str(MODELS / "yunet.onnx"), "", (w, h), 0.75)
     rows, gap = [], 0
+    previous_center = None
     repeated = {} if loop and duration is not None and duration > info["duration"] else None
     for frame in frames(file, w, h, duration=duration, loop=loop):
         # Reuse only byte-identical decoded frames. This also handles VFR loop
@@ -106,9 +107,13 @@ def track(file, duration=None, loop=False):
             if gap > 5:
                 raise QualityError("Face missing for more than five frames")
             continue
-        if len(found) != 1:
-            raise QualityError("More than one face in the source")
-        row = found[0, :14].astype(float)
+        # Start with the largest face, then follow its position instead of
+        # rejecting extra detections or switching with the detector's ordering.
+        centers = found[:, :2] + found[:, 2:4] / 2
+        index = (np.argmax(found[:, 2] * found[:, 3]) if previous_center is None
+                 else np.argmin(np.linalg.norm(centers - previous_center, axis=1)))
+        previous_center = centers[index]
+        row = found[index, :14].astype(float)
         row[0::2] *= info["width"] / w
         row[1::2] *= info["height"] / h
         rows.append(row)
