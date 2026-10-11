@@ -141,7 +141,7 @@ export default function Navbar() {
                 >
                   <Coins className="h-3.5 w-3.5 text-amber-400" />
                   <span className="font-mono font-bold">
-                    {typeof points === "number" ? points.toLocaleString() : "--"}
+                    {typeof points === "number" ? Math.max(0, points).toLocaleString() : "--"}
                   </span>
                   <span className="text-[10px] text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
                     {session?.billing?.ratePerSecond ?? 20}分/秒

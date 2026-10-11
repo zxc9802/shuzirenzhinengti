@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { estimateReservationDuration } from "@/lib/billing-estimate";
+import { estimateScriptDuration } from "@/lib/billing-estimate";
 import {
   Play,
   RotateCcw,
@@ -389,9 +389,8 @@ export default function StudioPage() {
 
             {/* Dynamic Duration & Points Estimation */}
             {scriptText.trim().length > 0 && (() => {
-              const estDuration = Math.max(3, Math.ceil(scriptText.trim().length / 4.4));
+              const estDuration = estimateScriptDuration(scriptText);
               const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
-              const reservedPoints = Math.ceil(estimateReservationDuration(scriptText) * (userSession?.billing?.ratePerSecond ?? 20));
               const estCny = (estDuration * 0.2).toFixed(2);
               const isExternal =
                 userSession?.billing?.isExternal ??
@@ -401,7 +400,7 @@ export default function StudioPage() {
               const isInsufficient =
                 isExternal &&
                 typeof userBalance === "number" &&
-                userBalance < reservedPoints;
+                userBalance <= 0;
 
               return (
                 <div className="mt-2.5 space-y-2">
@@ -434,17 +433,16 @@ export default function StudioPage() {
                     </div>
                   </div>
 
-                  {isExternal && <p className="text-[11px] text-zinc-400">先预留 {reservedPoints.toLocaleString()} 积分，按{audioOnly ? "配音" : "成片"}实际时长结算，多余积分退回。</p>}
+                  {isExternal && <p className="text-[11px] text-zinc-400">积分余额大于 0 即可生成，成功后按{audioOnly ? "配音" : "成片"}实际时长扣费。</p>}
                   {isInsufficient && (
                     <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
                       <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
                       <span>
                         当前账户积分余额 (
                         {typeof userBalance === "number"
-                          ? userBalance.toLocaleString()
+                          ? Math.max(0, userBalance).toLocaleString()
                           : 0}{" "}
-                        积分) 不足，本次需预留 {reservedPoints.toLocaleString()}{" "}
-                        积分，请先充值。
+                        积分) 已用完，请先充值。
                         {userSession?.billing?.rechargeUrl && (
                           <a href={userSession.billing.rechargeUrl} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold underline underline-offset-2 hover:text-white">
                             积分充值
@@ -630,7 +628,7 @@ export default function StudioPage() {
 
           {/* Action Trigger */}
           {(() => {
-            const estDuration = estimateReservationDuration(scriptText);
+            const estDuration = estimateScriptDuration(scriptText);
             const estPoints = Math.ceil(estDuration * (userSession?.billing?.ratePerSecond ?? 20));
             const isExternal =
               userSession?.billing?.isExternal ??
@@ -648,7 +646,7 @@ export default function StudioPage() {
                   {isRunning
                     ? "流水线正在运行中..."
                     : isExternal && scriptText.trim()
-                    ? `${audioOnly ? "生成配音 (MP3)" : "开始执行数字人对口型流水线"} (预留 ${estPoints.toLocaleString()} 积分)`
+                    ? `${audioOnly ? "生成配音 (MP3)" : "开始执行数字人对口型流水线"} (预计 ${estPoints.toLocaleString()} 积分)`
                     : audioOnly ? "生成配音 (MP3)" : "开始执行数字人对口型流水线"}
                 </span>
                 <ArrowRight className="h-4 w-4 text-blue-200 opacity-80 ml-1" />

@@ -13,7 +13,7 @@ import {
   POINTS_PER_SECOND,
   CNY_PER_SECOND,
 } from "@/lib/main-app-billing";
-import { estimateReservationDuration } from "@/lib/billing-estimate";
+import { estimateScriptDuration } from "@/lib/billing-estimate";
 import { acquireGenerationSlot, GenerationLimitError } from "@/lib/server/generation-limit";
 import {
   resolveAccessContext,
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
 
     // Bound paid attempts independently of whether the task later refunds or is deleted.
     if (isExternallyBilledUser(user) || user.billingAudience === "standalone") releaseSlot = acquireGenerationSlot(user.id!);
-    const estimatedDuration = estimateReservationDuration(scriptText);
+    const estimatedDuration = estimateScriptDuration(scriptText);
     const reservation = await reserveMainAppCredits({
       user,
       sessionToken: session?.token,
@@ -133,6 +133,7 @@ export async function POST(req: NextRequest) {
         estimatedDuration,
         estimatedPoints: reservation.requiredPoints,
         reservedPoints: reservation.reservedPoints,
+        billingMode: reservation.billingMode,
         costCny: reservation.costCny,
         pointsBalanceBefore: reservation.pointsBalance,
         status: reservation.chargeRequired ? "reserved" : "not_applicable",

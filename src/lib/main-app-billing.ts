@@ -65,13 +65,14 @@ export function calculateRequiredPoints(durationSeconds: number): number {
 }
 
 export function assertTaskCreditCoverage(
-  billing: { isExternalUser: boolean; status: string; reservedPoints?: number } | undefined,
+  billing: { isExternalUser: boolean; status: string; reservedPoints?: number; billingMode?: "positive-balance" } | undefined,
   durationSeconds: number,
 ): void {
   if (!billing?.isExternalUser) return;
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 ||
     billing.status !== "reserved" || !Number.isSafeInteger(billing.reservedPoints) ||
-    (billing.reservedPoints || 0) < calculateRequiredPoints(durationSeconds)) {
+    (billing.reservedPoints || 0) < 0 ||
+    (billing.billingMode !== "positive-balance" && (billing.reservedPoints || 0) < calculateRequiredPoints(durationSeconds))) {
     throw new MainAppBillingError(
       "实际配音超出预留额度，请缩短文案后重试",
       402,
@@ -204,7 +205,7 @@ async function postBillingApi(
 }
 
 /**
- * 任务启动前预留/冻结积分
+ * 任务启动前由主站确认余额大于 0；兼容已有任务的预留额度
  */
 export async function reserveMainAppCredits(input: {
   user: Partial<MainAppUser>;
@@ -216,6 +217,7 @@ export async function reserveMainAppCredits(input: {
   chargeRequired: boolean;
   requiredPoints: number;
   reservedPoints: number;
+  billingMode?: "positive-balance";
   estimatedDuration: number;
   costCny: number;
   pointsBalance?: number;
@@ -261,7 +263,7 @@ export async function reserveMainAppCredits(input: {
       (result.error && result.error.includes("余额不足"))
     ) {
       throw new MainAppBillingError(
-        `积分余额不足：本次生成预计约 ${input.estimatedDuration} 秒，需消耗 ${requiredPoints} 积分（0.20元/秒），请充值后再试。`,
+        "积分已用完，请充值后再生成。",
         402,
         "INSUFFICIENT_POINTS",
       );
@@ -274,7 +276,9 @@ export async function reserveMainAppCredits(input: {
   }
 
   const reservedPoints = Number(result.data?.reservedCredits);
-  if (!Number.isSafeInteger(reservedPoints) || reservedPoints < requiredPoints ||
+  const billingMode = result.data?.billingMode === "positive-balance" ? "positive-balance" : undefined;
+  if (!Number.isSafeInteger(reservedPoints) || reservedPoints < 0 ||
+    (billingMode !== "positive-balance" && reservedPoints < requiredPoints) ||
     result.data?.requestId !== requestId || result.data?.chargeRequired !== true) {
     // No paid work has started. Release this same reservation, never create another one.
     await releaseMainAppCredits({ userId: input.user.id, requestId, sessionToken: input.sessionToken });
@@ -286,6 +290,7 @@ export async function reserveMainAppCredits(input: {
     chargeRequired: true,
     requiredPoints,
     reservedPoints,
+    billingMode,
     estimatedDuration: input.estimatedDuration,
     costCny,
     pointsBalance: result.data?.pointsBalance,

@@ -36,23 +36,26 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       const generated = spawnSync("ffmpeg", ["-v", "error", ...args], {encoding: "utf8"});
       assert.equal(generated.status, 0, generated.stderr);
     }
-    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage", "face-prep-failure", "face-sync-failure"]) {
+    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage", "face-prep-failure", "face-sync-failure", "positive-balance", "audio-positive-balance"]) {
       const audioOnly = scenario.startsWith("audio-");
+      const positiveBalanceOnly = scenario.endsWith("positive-balance");
       const events = [];
       globalThis.fetch = async (url, init) => {
         assert.ok(String(url).endsWith("/api/sso/billing"), "no real network calls");
         const request = JSON.parse(init.body);
         events.push({stage: "ledger", action: request.action, points: request.points});
         if (scenario.endsWith("settle-outage") && request.action === "settle") throw new Error("simulated timeout");
-        return Response.json({success: true, data: {reservedCredits: request.points,
-          requestId: request.requestId, chargeRequired: true, pointsBalance: 940}});
+        return Response.json({success: true, data: {reservedCredits: positiveBalanceOnly ? 0 : request.points,
+          ...(positiveBalanceOnly ? {billingMode: "positive-balance"} : {}),
+          requestId: request.requestId, chargeRequired: true, pointsBalance: positiveBalanceOnly ? (request.action === "reserve" ? 1 : 0) : 940}});
       };
       const user = {id: "owner", role: scenario === "internal-success" ? "admin" : "member"};
       const reservation = await billing.reserveMainAppCredits({user, sessionToken: "fake", estimatedDuration: 6});
-      const duration = scenario.endsWith("under-reserved") ? 8 : 3;
+      const duration = scenario.endsWith("under-reserved") || positiveBalanceOnly ? 8 : 3;
       let task = {id: scenario, userId: user.id, status: "pending", logs: [],
         billing: {isExternalUser: reservation.chargeRequired, status: reservation.chargeRequired ? "reserved" : "not_applicable",
-          requestId: reservation.requestId, estimatedDuration: 6, estimatedPoints: reservation.requiredPoints, reservedPoints: reservation.reservedPoints},
+          requestId: reservation.requestId, estimatedDuration: 6, estimatedPoints: reservation.requiredPoints, reservedPoints: reservation.reservedPoints,
+          billingMode: reservation.billingMode},
         inputs: {videoPath: audioOnly ? "" : scenario === "silent-smart" ? silent : sound, videoUrl: "", outputType: audioOnly ? "audio" : "video", scriptText: "你好",
           speakerAudioUrl: speaker, videoFit: scenario === "preserve-failure" ? "preserve" : "smart", lipsyncProvider: "veed"}, results: {}};
       const TaskStore = {get: () => task, isDeleted: () => false,
@@ -144,6 +147,11 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         assert.equal(task.status, "completed", `${scenario}: ${task.error}`);
         assert.equal(isTaskOutputDeliverable(task), true);
         assert.equal(events.filter(e => e.action === "settle").length, scenario === "internal-success" ? 0 : 1);
+        if (positiveBalanceOnly) {
+          assert.equal(task.billing.reservedPoints, 0);
+          assert.equal(task.billing.pointsBalanceAfter, 0);
+          assert.equal(events.find(e => e.action === "settle").points, 160);
+        }
         if (audioOnly) {
           assert.equal(task.results.finalVideoUrl, undefined);
           assert.equal(task.results.audioFormat, "mp3");

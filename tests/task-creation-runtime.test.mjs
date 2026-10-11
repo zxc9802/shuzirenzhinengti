@@ -36,7 +36,9 @@ test("task POST enforces credits and concurrency, sanitizes errors, and keeps in
       const body = JSON.parse(init.body); requests.push(body);
       if (mode === "insufficient") return Response.json({success: false, code: "INSUFFICIENT_CREDITS"}, {status: 402});
       if (mode === "unsafe") return Response.json({success: false, error: "NewVendor api_key=FAKE_SECRET", code: "FAKE_SECRET"}, {status: 500});
-      return Response.json({success: true, data: {requestId: body.requestId, reservedCredits: body.points, chargeRequired: true}});
+      return Response.json({success: true, data: {requestId: body.requestId,
+        reservedCredits: mode === "positive-balance" ? 0 : body.points, chargeRequired: true,
+        ...(mode === "positive-balance" ? {billingMode: "positive-balance", pointsBalance: 1} : {})}});
     };
     const deps = {
       "next/server": {NextRequest, NextResponse},
@@ -83,7 +85,7 @@ test("task POST enforces credits and concurrency, sanitizes errors, and keeps in
     mode = "ok";
     const successful = await post();
     assert.equal(successful.status, 200);
-    assert.equal(tasks[0].billing.reservedPoints, 120, "3 second estimate reserves 6 seconds including margin");
+    assert.equal(tasks[0].billing.reservedPoints, 60, "legacy ledger uses the 3 second estimate without extra margin");
     const ledgerCount = requests.length;
     assert.equal((await post()).status, 429);
     assert.equal(requests.length, ledgerCount, "concurrent attempt must stop before reserving again");
@@ -94,11 +96,18 @@ test("task POST enforces credits and concurrency, sanitizes errors, and keeps in
     assert.equal(failure.status, 503);
     assert.doesNotMatch(JSON.stringify(await failure.json()), /NewVendor|FAKE_SECRET/);
     assert.equal(pipelines.length, 1);
+    user = {...user, id: "positive-balance-user", pointsBalance: 1};
+    mode = "positive-balance";
+    assert.equal((await post({avatarId: "avatar", scriptText: "一".repeat(100)})).status, 200);
+    assert.equal(tasks.at(-1).billing.billingMode, "positive-balance");
+    assert.equal(tasks.at(-1).billing.reservedPoints, 0);
+    assert.equal(tasks.at(-1).billing.estimatedPoints, 460);
+    finish(); await new Promise(resolve => setImmediate(resolve));
     user = {...user, id: "admin", role: "admin", billingAudience: "internal"};
     const countBeforeAdmin = requests.length;
     assert.equal((await post()).status, 200);
     assert.equal(requests.length, countBeforeAdmin);
-    assert.equal(tasks[1].billing.isExternalUser, false);
+    assert.equal(tasks.at(-1).billing.isExternalUser, false);
     finish(); await new Promise(resolve => setImmediate(resolve));
     user = {...user, id: "audio-user", role: "member", billingAudience: "external"};
     mode = "ok";

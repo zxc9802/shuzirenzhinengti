@@ -31,6 +31,7 @@ export interface TaskBillingInfo {
   estimatedDuration?: number;
   estimatedPoints?: number;
   reservedPoints?: number;
+  billingMode?: "positive-balance";
   actualDuration?: number;
   chargedPoints?: number;
   costCny?: number;

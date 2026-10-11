@@ -125,7 +125,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
 
     if (task.billing?.isExternalUser) {
       log(
-        `💳 外部用户计费：费率 ${POINTS_PER_SECOND}积分/秒 (0.20元/秒)，已预留 ${task.billing.estimatedPoints} 积分 (预估 ${task.billing.estimatedDuration}s)`,
+        `💳 外部用户计费：费率 ${POINTS_PER_SECOND}积分/秒 (0.20元/秒)，预计 ${task.billing.estimatedPoints} 积分 (预估 ${task.billing.estimatedDuration}s)，成功后按实际时长结算`,
         "info"
       );
     } else {
@@ -602,7 +602,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
       pointsBalanceAfter = settleResult.pointsBalance;
       log(
         `✅ 主站积分结算成功：扣除 ${chargedPoints} 积分 (¥${costCny})，当前账户剩余: ${
-          pointsBalanceAfter !== undefined ? `${pointsBalanceAfter} 积分` : "正常"
+          pointsBalanceAfter !== undefined ? `${Math.max(0, pointsBalanceAfter)} 积分` : "正常"
         }`,
         "success"
       );

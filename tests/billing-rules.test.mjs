@@ -4,13 +4,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const billing = await import("../src/lib/main-app-billing.ts");
-const { estimateReservationDuration } = await import("../src/lib/billing-estimate.ts");
-
-test("reservation estimates include a margin without charging for the full avatar source length", () => {
-  assert.equal(estimateReservationDuration("你好"), 6);
-  assert.equal(estimateReservationDuration("一".repeat(44)), 15);
-  assert.equal(estimateReservationDuration(""), 0);
-});
 
 test("rate constants are mutually consistent (20 points/s == 0.20 CNY/s at 100 points per CNY)", () => {
   assert.equal(billing.POINTS_PER_SECOND, 20);
@@ -177,6 +170,30 @@ test("settle and release fail closed unless the main ledger returns success=true
     if (previousMainAppUrl === undefined) delete process.env.MAIN_APP_URL;
     else process.env.MAIN_APP_URL = previousMainAppUrl;
   }
+});
+
+test("positive-balance admission supports actual duration beyond the estimate without a credit hold", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_url, init) => {
+      const request = JSON.parse(init.body);
+      return Response.json({ success: true, data: {
+        requestId: request.requestId, chargeRequired: true, reservedCredits: 0,
+        billingMode: "positive-balance", pointsBalance: 1,
+      } });
+    };
+    const admitted = await billing.reserveMainAppCredits({
+      user: { id: "owner", role: "member" }, sessionToken: "fake", estimatedDuration: 31,
+    });
+    assert.equal(admitted.billingMode, "positive-balance");
+    assert.equal(admitted.reservedPoints, 0);
+    assert.doesNotThrow(() => billing.assertTaskCreditCoverage({
+      isExternalUser: true, status: "reserved", reservedPoints: 0, billingMode: admitted.billingMode,
+    }, 60));
+    assert.throws(() => billing.assertTaskCreditCoverage({
+      isExternalUser: true, status: "released", reservedPoints: 0, billingMode: admitted.billingMode,
+    }, 60));
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("settle and release refuse missing ledger identity before making a request", async () => {

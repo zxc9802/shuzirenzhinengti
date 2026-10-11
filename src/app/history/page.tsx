@@ -134,7 +134,7 @@ export default function HistoryPage() {
                           <span>
                             {isDone && typeof (task.results?.chargedPoints ?? task.billing.chargedPoints) === "number"
                               ? `已扣 ${(task.results?.chargedPoints ?? task.billing.chargedPoints ?? 0).toLocaleString()} 积分 (¥${(task.results?.costCny ?? task.billing.costCny ?? 0).toFixed(2)})`
-                              : `预留 ${(task.billing.estimatedPoints ?? 0).toLocaleString()} 积分`}
+                              : `预计 ${(task.billing.estimatedPoints ?? 0).toLocaleString()} 积分`}
                           </span>
                         </span>
                       )}
