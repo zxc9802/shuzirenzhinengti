@@ -87,13 +87,19 @@ export async function generateIndexTTS(
     options.onLog?.("主配音失败，使用豆包声音复刻 2.0 重新合成完整文案...");
     const { generateDoubaoTTS } = await import("./doubao-tts");
     try {
-      return await generateDoubaoTTS(text, {
+      const result = await generateDoubaoTTS(text, {
         ...options.fallback,
         toneProfile: options.toneProfile,
         outDir: path.join(options.outDir, "tts-doubao"),
         onLog: options.onLog,
         checkActive: options.checkActive,
       });
+      options.checkActive?.();
+      const rawWavPath = path.join(options.outDir, "voice-raw.wav");
+      const finalWavPath = path.join(options.outDir, "voice-track.wav");
+      fs.copyFileSync(result.rawWavPath, rawWavPath);
+      fs.copyFileSync(result.finalWavPath, finalWavPath);
+      return { ...result, rawWavPath, finalWavPath };
     } catch (fallbackError) {
       throw new Error(`主配音失败: ${primaryError instanceof Error ? primaryError.message : "未知错误"}；豆包备用配音失败: ${fallbackError instanceof Error ? fallbackError.message : "未知错误"}`);
     }

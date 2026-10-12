@@ -97,6 +97,9 @@ test('a failed IndexTTS sentence switches the entire script to Doubao 2.0 and ap
     assert.equal(fallback[0].init.headers['X-Api-Resource-Id'], 'seed-icl-2.0');
     assert.equal(fallback[0].init.headers['X-Api-Key'], 'doubao-test');
     assert.equal(fallback[0].init.redirect, 'error');
+    assert.equal(result.finalWavPath, path.join(h.options.outDir, 'voice-track.wav'));
+    assert.equal(result.rawWavPath, path.join(h.options.outDir, 'voice-raw.wav'));
+    assert.ok(fs.statSync(result.finalWavPath).size > 44, 'face recovery must find the complete narration at the job root');
     assert.ok(Math.abs(result.rawDuration - 0.5) < 0.02, 'must use only the complete fallback track');
     assert.ok(Math.abs(result.selectedDuration - result.rawDuration / 1.2) < 0.08);
     assert.equal(h.logs.filter(m => m === 'fallback').length, 1);
