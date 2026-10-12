@@ -324,7 +324,8 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
   log("正在将成片与原声音轨混流封装...");
   const finalProbe = faceWorkflow ? await finalizeFaceLipsync({
     jobDir, renderedPath: rawPath, audioPath, outputPath: finalPath,
-    onLog: log,
+    onQualityWarnings: (qualityWarnings) => TaskStore.update(taskId, { results: { qualityWarnings } }),
+    onLog: (message, level) => TaskStore.addLog(taskId, message, level || "info", message),
   }) : await finalizeVideo(rawPath, audioPath, finalPath);
   await verifyVideoDuration(finalPath, audioProbe.durationSeconds);
   const sha256Video = await sha256File(finalPath);
@@ -339,7 +340,8 @@ async function recoverTask(taskId: string, sessionToken?: string): Promise<TaskI
     created_at: new Date().toISOString(),
     recovered: true,
     script_text: task.inputs.scriptText,
-    processing: { status: "completed", recovered: true, lipsync_alignment_checked: faceWorkflow || undefined },
+    processing: { status: "completed", recovered: true, lipsync_alignment_checked: faceWorkflow || undefined,
+      quality_warnings: TaskStore.get(taskId)?.results.qualityWarnings },
     media: {
       video: {
         final_duration_seconds: finalProbe.durationSeconds,

@@ -44,27 +44,31 @@ test('recovery uploads overlap and all in-flight writes finish before a failure 
   }
 });
 
-test('final video is published only after compositing and encoded-output alignment pass', async () => {
+test('final video keeps quality warnings and still rejects an encoding failure', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'face-final-'));
-  let fail = true; const operations = []; const logs = [];
+  let fail = true; const operations = []; const logs = []; const warningReports = [];
   const api = load({}, {execMediaCommand: async (_command,args) => {
     operations.push(args[1]);
     const request = JSON.parse(fs.readFileSync(args[2],'utf8'));
     if (args[1] === 'composite') return JSON.stringify({elapsedSeconds:12});
     fs.writeFileSync(request.outputPath,'encoded candidate');
-    if (fail) throw new Error('LIPSYNC_ALIGNMENT: uncertain match');
-    return JSON.stringify({timingsSeconds:{measureBefore:5,encode:4,measureAfter:3}});
+    if (fail) throw new Error('LIPSYNC_MEDIA: encode failed');
+    return JSON.stringify({warnings:['口型同步检测置信度不足，请检查成片。'],
+      timingsSeconds:{measureBefore:5,encode:4,measureAfter:3}});
   }, probeMedia: async file=>({durationSeconds:3,bytes:fs.statSync(file).size})});
   const params = {jobDir:dir,renderedPath:'rendered.mp4',audioPath:'voice.wav',
-    outputPath:path.join(dir,'final.mp4'),onLog:message=>logs.push(message)};
+    outputPath:path.join(dir,'final.mp4'),onLog:(message,level)=>logs.push({message,level}),
+    onQualityWarnings: warnings=>warningReports.push(warnings)};
   try {
-    await assert.rejects(api.finalizeFaceLipsync(params), /uncertain match/);
+    await assert.rejects(api.finalizeFaceLipsync(params), /encode failed/);
     assert.equal(fs.existsSync(params.outputPath),false);
     assert.equal(fs.existsSync(path.join(dir,'face-final-candidate.mp4')),false);
     fail = false;
     const result = await api.finalizeFaceLipsync(params);
     assert.ok(result.bytes>0);
     assert.deepEqual(operations,['composite','align','composite','align']);
-    assert.match(logs.at(-1), /成片复核 3 秒/);
+    assert.match(logs.at(-1).message, /成片复核 3 秒/);
+    assert.deepEqual(warningReports,[['口型同步检测置信度不足，请检查成片。']]);
+    assert.ok(logs.some(entry=>entry.level==='warn' && entry.message.includes('置信度不足')));
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });

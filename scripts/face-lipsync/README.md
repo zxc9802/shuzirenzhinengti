@@ -21,8 +21,12 @@ existing processing. There is no automatic paid regeneration.
 5. Measure AV alignment in overlapping speech windows using SyncNet. A reliable
    consistent offset may move the audio or pad the video start; original speech
    is never trimmed or accelerated. Measure the encoded candidate again before
-   renaming it to `final.mp4`. Low confidence, inconsistent section offsets or
-   processing failures leave the task failed and its provider identity intact.
+   renaming it to `final.mp4`. Low confidence, range-boundary offsets,
+   inconsistent section offsets and incomplete measurements are advisory:
+   keep the encoded video and save user-facing warnings in the task and report.
+   When the initial measurement is unreliable, preserve the original timing.
+   Decoding/compositing/encoding failures still fail the task and retain the
+   provider identity for recovery. Normal generation and recovery share this policy.
 
 The score is an engineering check, not a guarantee of perceptual quality. It
 requires at least 1.2 seconds of narration and has 40 ms temporal resolution,

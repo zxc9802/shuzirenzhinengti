@@ -7,6 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const require = createRequire(import.meta.url);
 const React = require("react");
+const warningModule = { exports: {} };
+const warningCompiled = ts.transpileModule(fs.readFileSync("src/components/QualityWarnings.tsx", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+new Function("require", "module", "exports", warningCompiled)(require, warningModule, warningModule.exports);
 const compiled = ts.transpileModule(fs.readFileSync("src/components/PlayerComparison.tsx", "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
     esModuleInterop: true, jsx: ts.JsxEmit.React },
@@ -23,6 +28,7 @@ function player(props) {
       return [state[index], value => { state[index] = value; }];
     } };
     if (name === "@/lib/utils") return { formatDuration: seconds => String(seconds) };
+    if (name === "./QualityWarnings") return warningModule.exports;
     return require(name);
   }, module, module.exports);
   return () => { cursor = 0; return module.exports.default(props); };
@@ -63,4 +69,18 @@ test("both preview frames follow the actual loaded video dimensions", () => {
   containers = videoContainers(render());
   assert.equal(containers[0].container.props.style.aspectRatio, 9 / 16);
   assert.equal(containers[1].container.props.style.aspectRatio, 16 / 9);
+});
+
+test("quality findings remain visible alongside video playback and download", () => {
+  const render = player({taskId: "fixture", finalVideoUrl: "/final.mp4",
+    qualityWarnings: ["部分片段口型检测置信度不足", "成片存在约 80 毫秒音画偏移"]});
+  const html = renderToStaticMarkup(render());
+  assert.match(html, /成片检测提示/);
+  assert.match(html, /部分片段口型检测置信度不足/);
+  assert.match(html, /80 毫秒/);
+  assert.match(html, /src="\/final.mp4"/);
+  assert.match(html, /\/api\/tasks\/fixture\/download\/final.mp4/);
+  assert.doesNotMatch(html, /高精度唇形对齐 完成/);
+  const clean = renderToStaticMarkup(player({taskId: "clean", finalVideoUrl: "/final.mp4"})());
+  assert.doesNotMatch(clean, /成片检测提示/);
 });

@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
+import QualityWarnings from "./QualityWarnings";
 
 interface PlayerComparisonProps {
   taskId: string;
@@ -23,6 +24,7 @@ interface PlayerComparisonProps {
   exactAudioUrl?: string;
   audioFormat?: "wav" | "mp3";
   evidenceJsonUrl?: string;
+  qualityWarnings?: string[];
   metadata?: any;
 }
 
@@ -33,6 +35,7 @@ export default function PlayerComparison({
   exactAudioUrl,
   audioFormat,
   evidenceJsonUrl,
+  qualityWarnings,
   metadata,
 }: PlayerComparisonProps) {
   const originalRef = useRef<HTMLVideoElement>(null);
@@ -95,7 +98,7 @@ export default function PlayerComparison({
                 对口型成片交付与核验
               </h3>
               <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                高精度唇形对齐 完成
+                {qualityWarnings?.length ? "成片已生成 · 有检测提示" : "成片已生成"}
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-0.5">
@@ -132,6 +135,8 @@ export default function PlayerComparison({
           </button>
         </div>
       </div>
+
+      <QualityWarnings warnings={qualityWarnings} />
 
       {/* Videos Layout */}
       <div

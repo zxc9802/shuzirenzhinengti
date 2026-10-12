@@ -19,6 +19,16 @@ const IMPLEMENTATION_MARKERS =
 
 const COS_HOST = "https://shuziren-1410143389.cos.ap-singapore.myqcloud.com";
 
+test("completed videos expose quality warnings without hiding their deliverable", () => {
+  const task = makeTask({status: "completed", step: "done", error: undefined,
+    billing: {isExternalUser: false, status: "not_applicable"}});
+  task.results.qualityWarnings = ["部分片段口型同步检测置信度不足，请检查成片。"];
+  const result = toPublicTask(task);
+  assert.deepEqual(result.results.qualityWarnings, task.results.qualityWarnings);
+  assert.ok(result.results.finalVideoUrl);
+  assert.equal(result.status, "completed");
+});
+
 function makeTask(overrides = {}) {
   const now = 1_790_000_000_000;
   return {

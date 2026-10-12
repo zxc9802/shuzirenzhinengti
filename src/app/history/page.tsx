@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { History, Film, Download, CheckCircle2, AlertCircle, Clock, Trash2, ArrowRight, Play, Coins } from "lucide-react";
 import type { PublicTaskItem } from "@/lib/public-contract";
 import { formatDuration } from "@/lib/utils";
+import QualityWarnings from "@/components/QualityWarnings";
 import Link from "next/link";
 
 export default function HistoryPage() {
@@ -206,6 +207,9 @@ export default function HistoryPage() {
                     </button>
                   </div>
                 </div>
+                {isDone && task.results.qualityWarnings?.length ? (
+                  <div className="mt-4"><QualityWarnings warnings={task.results.qualityWarnings} /></div>
+                ) : null}
               </div>
             );
           })}

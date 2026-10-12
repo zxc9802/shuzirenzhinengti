@@ -534,7 +534,11 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
 
     const finalProbe = lipsyncProvider === "veed" ? await finalizeFaceLipsync({
       jobDir, renderedPath: heygenDownloadedPath, audioPath: ttsResult.finalWavPath, outputPath: finalVideoPath,
-      onLog: (message) => { ensureTaskActive(); log(message); },
+      onLog: (message, level) => { ensureTaskActive(); log(message, level); },
+      onQualityWarnings: (qualityWarnings) => {
+        ensureTaskActive();
+        TaskStore.update(taskId, { results: { qualityWarnings } });
+      },
     }) : await finalizeVideo(
       heygenDownloadedPath,
       ttsResult.finalWavPath,
@@ -567,7 +571,8 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
           sha256: sha256Audio,
         },
       },
-      processing: { status: "completed", lipsync_alignment_checked: lipsyncProvider === "veed" || undefined },
+      processing: { status: "completed", lipsync_alignment_checked: lipsyncProvider === "veed" || undefined,
+        quality_warnings: TaskStore.get(taskId)?.results.qualityWarnings },
     };
 
     const evidencePath = path.join(jobDir, "production-report.json");

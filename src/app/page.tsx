@@ -691,6 +691,7 @@ export default function StudioPage() {
               exactAudioUrl={currentTask.results.exactAudioUrl}
               audioFormat={currentTask.results.audioFormat}
               evidenceJsonUrl={currentTask.results.evidenceJsonUrl}
+              qualityWarnings={currentTask.results.qualityWarnings}
               metadata={currentTask.results}
             />
           )}

@@ -36,7 +36,7 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       const generated = spawnSync("ffmpeg", ["-v", "error", ...args], {encoding: "utf8"});
       assert.equal(generated.status, 0, generated.stderr);
     }
-    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage", "face-prep-failure", "face-sync-failure", "positive-balance", "audio-positive-balance"]) {
+    for (const scenario of ["under-reserved", "silent-smart", "external-success", "internal-success", "settle-outage", "preserve-failure", "setup-failure", "audio-only", "audio-under-reserved", "audio-settle-outage", "face-prep-failure", "face-encode-failure", "face-sync-warning", "positive-balance", "audio-positive-balance"]) {
       const audioOnly = scenario.startsWith("audio-");
       const positiveBalanceOnly = scenario.endsWith("positive-balance");
       const events = [];
@@ -88,9 +88,10 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
             fs.writeFileSync(videoPath, "face-crop"); fs.writeFileSync(audioPath, "padded-voice");
             return {videoPath, audioPath, durationSeconds: duration + 0.9};
           },
-          finalizeFaceLipsync: async ({outputPath}) => {
+          finalizeFaceLipsync: async ({outputPath,onQualityWarnings}) => {
             events.push({stage: "face-finalize"});
-            if (scenario === "face-sync-failure") throw Object.assign(new Error("sync mismatch"), {code: "LIPSYNC_ALIGNMENT"});
+            if (scenario === "face-encode-failure") throw Object.assign(new Error("encode failed"), {code: "LIPSYNC_MEDIA"});
+            onQualityWarnings(scenario === "face-sync-warning" ? ["口型同步检测置信度不足，请检查成片。"] : []);
             fs.writeFileSync(outputPath, "fixture");
             return {durationSeconds: duration, width: 160, height: 120, fps: 30};
           },
@@ -132,9 +133,9 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
         assert.equal(isTaskOutputDeliverable(task), false, scenario);
         if (scenario.endsWith("under-reserved")) assert.equal(task.errorCode, "BILLING_RESERVATION_TOO_SMALL");
         if (scenario === "setup-failure") assert.equal(events.some(e => e.stage === "tts"), false);
-      } else if (scenario === "face-sync-failure") {
+      } else if (scenario === "face-encode-failure") {
         assert.equal(task.status, "failed");
-        assert.equal(task.errorCode, "LIPSYNC_ALIGNMENT");
+        assert.equal(task.errorCode, "LIPSYNC_MEDIA");
         assert.equal(task.billing.status, "provider_committed");
         assert.equal(events.some(e => e.action === "settle" || e.action === "release"), false);
         assert.equal(isTaskOutputDeliverable(task), false);
@@ -145,6 +146,11 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       } else {
         if (!audioOnly) assert.deepEqual(events.filter(e => e.stage.startsWith("face-")).map(e => e.stage), ["face-prep", "face-finalize"]);
         assert.equal(task.status, "completed", `${scenario}: ${task.error}`);
+        if (scenario === "face-sync-warning") {
+          assert.deepEqual(task.results.qualityWarnings,["口型同步检测置信度不足，请检查成片。"]);
+          const evidence = JSON.parse(fs.readFileSync(task.results.evidenceJsonUrl,"utf8"));
+          assert.deepEqual(evidence.processing.quality_warnings, task.results.qualityWarnings);
+        }
         assert.equal(isTaskOutputDeliverable(task), true);
         assert.equal(events.filter(e => e.action === "settle").length, scenario === "internal-success" ? 0 : 1);
         if (positiveBalanceOnly) {

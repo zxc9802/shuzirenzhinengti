@@ -55,6 +55,7 @@ export interface PublicTaskItem {
     engine: PublicEngine;
   };
   results: {
+    qualityWarnings?: string[];
     originalVideoUrl?: string;
     finalVideoUrl?: string;
     exactAudioUrl?: string;

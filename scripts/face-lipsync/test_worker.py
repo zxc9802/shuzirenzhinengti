@@ -153,7 +153,7 @@ class FaceWorkflowTests(unittest.TestCase):
             np.testing.assert_array_equal(measured[1][2][1][:2], np.repeat(data[:1], 2, axis=0))
             np.testing.assert_array_equal(measured[1][2][1][2:], data)
 
-    def test_encoded_candidate_alignment_failure_still_removes_deliverable(self):
+    def test_encoded_candidate_alignment_warning_keeps_deliverable(self):
         data = np.ones((60, 14))
         info = {"width":640, "height":480, "duration":2}
         with tempfile.TemporaryDirectory() as directory:
@@ -162,9 +162,63 @@ class FaceWorkflowTests(unittest.TestCase):
                  patch("worker.sync_scores", side_effect=[[{"delayMs":0,"confidence":5}], [{"delayMs":80,"confidence":5}]]), \
                  patch("worker.probe", return_value=info), \
                  patch("worker.ffmpeg", side_effect=lambda args:Path(args[-1]).touch()):
-                with self.assertRaises(QualityError):
-                    worker.align({"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory})
-            self.assertFalse(Path(output).exists())
+                report = worker.align({"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory})
+            self.assertTrue(Path(output).exists())
+            self.assertTrue(any("80" in message for message in report["warnings"]))
+            self.assertEqual(json.loads((Path(directory)/"face-sync-report.json").read_text())["warnings"], report["warnings"])
+
+    def test_unreliable_alignment_still_encodes_without_changing_timing(self):
+        data = np.ones((60, 14))
+        info = {"width":640, "height":480, "duration":2}
+        cases = [[], [{"delayMs":80,"confidence":1}], [{"delayMs":200,"confidence":5}],
+                 [{"delayMs":0,"confidence":5},{"delayMs":120,"confidence":5}]]
+        for rows in cases:
+            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as directory:
+                output = str(Path(directory)/"candidate.mp4")
+                with patch("worker.load_syncnet", return_value=object()), patch("worker.track", return_value=(info,data)), \
+                     patch("worker.sync_scores", side_effect=[rows, rows]), patch("worker.probe", return_value=info), \
+                     patch("worker.ffmpeg", side_effect=lambda args:Path(args[-1]).touch()) as encode:
+                    report = worker.align({"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory})
+                self.assertTrue(Path(output).exists())
+                self.assertTrue(report["warnings"])
+                self.assertEqual(report["appliedDelayMs"], 0)
+                self.assertRegex(encode.call_args.args[0][5], r"adelay=0(?:\.0)?:all=1")
+
+    def test_detector_failure_does_not_block_encoding_but_encoding_failure_does(self):
+        info = {"width":640, "height":480, "duration":2}
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory)/"candidate.mp4")
+            request = {"videoPath":"video.mp4", "audioPath":"voice.wav", "outputPath":output, "jobDir":directory}
+            with patch("worker.load_syncnet", side_effect=RuntimeError("private detector error /app/model")), \
+                 patch("worker.probe", return_value=info), \
+                 patch("worker.ffmpeg", side_effect=lambda args:Path(args[-1]).touch()):
+                report = worker.align(request)
+            self.assertTrue(Path(output).exists())
+            self.assertTrue(report["warnings"])
+            self.assertNotIn("/app/model", " ".join(report["warnings"]))
+            with patch("worker.load_syncnet", side_effect=RuntimeError("detector unavailable")), \
+                 patch("worker.probe", return_value=info), patch("worker.ffmpeg", side_effect=RuntimeError("encode failed")):
+                with self.assertRaisesRegex(RuntimeError, "encode failed"):
+                    worker.align(request)
+
+    def test_warning_output_is_a_real_complete_video_with_audio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            video, audio, output = [str(Path(directory)/name) for name in ["video.mp4", "voice.wav", "final.mp4"]]
+            worker.ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=160x120:r=30", "-t", "2", "-an", video])
+            worker.ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000", "-t", "2", audio])
+            info, data = worker.probe(video), np.ones((60, 14))
+            with patch("worker.load_syncnet", return_value=object()), patch("worker.track", return_value=(info,data)), \
+                 patch("worker.sync_scores", return_value=[{"delayMs":200,"confidence":1}]):
+                report = worker.align({"videoPath":video, "audioPath":audio, "outputPath":output, "jobDir":directory})
+            self.assertTrue(report["warnings"])
+            self.assertEqual(report["appliedDelayMs"], 0)
+            self.assertAlmostEqual(worker.probe(output)["duration"], 2, delta=1/30)
+            pcm = np.frombuffer(worker.ffmpeg(["-i", output, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]), np.int16)
+            original = np.frombuffer(worker.ffmpeg(["-i", audio, "-f", "s16le", "-"]), np.int16)
+            self.assertGreaterEqual(len(pcm), len(original))
+            self.assertLessEqual(len(pcm) - len(original), 1024)  # AAC tail padding
+            self.assertGreater(np.corrcoef(pcm[:len(original)], original)[0, 1], 0.99)
+            worker.ffmpeg(["-i", output, "-f", "null", "-"])
 
     def test_mouth_roi_matches_full_crop_math_pixel_for_pixel(self):
         rng = np.random.default_rng(37)

@@ -92,9 +92,10 @@ export async function finalizeFaceLipsync(params: {
   renderedPath: string;
   audioPath: string;
   outputPath: string;
-  onLog?: (message: string) => void;
+  onLog?: (message: string, level?: "info" | "warn") => void;
+  onQualityWarnings?: (warnings: string[]) => void;
 }) {
-  // Publish only after both compositing and the final AV measurement succeed.
+  // Detection findings are advisory; a successfully encoded video is deliverable.
   const candidate = path.join(params.jobDir, "face-final-candidate.mp4");
   try {
     const composite = await runWorker("composite", params, params.jobDir);
@@ -104,7 +105,10 @@ export async function finalizeFaceLipsync(params: {
       videoPath: path.join(params.jobDir, "face-composited.mp4"),
       outputPath: candidate,
     }, params.jobDir);
-    params.onLog?.(`口型校准通过：初次测量 ${alignment.timingsSeconds.measureBefore} 秒、成片编码 ${alignment.timingsSeconds.encode} 秒、成片复核 ${alignment.timingsSeconds.measureAfter} 秒`);
+    const warnings: string[] = alignment.warnings || [];
+    params.onQualityWarnings?.(warnings);
+    warnings.forEach(message => params.onLog?.(`检测提示：${message}`, "warn"));
+    params.onLog?.(`口型检测${warnings.length ? "完成，已记录检测提示" : "通过"}：初次测量 ${alignment.timingsSeconds.measureBefore} 秒、成片编码 ${alignment.timingsSeconds.encode} 秒、成片复核 ${alignment.timingsSeconds.measureAfter} 秒`);
     fs.renameSync(candidate, params.outputPath);
     return await probeMedia(params.outputPath);
   } finally {

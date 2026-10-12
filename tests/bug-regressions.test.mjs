@@ -148,7 +148,7 @@ test("B7: deleting a provider-committed task must not refund its stale initial r
   } finally { s.close(); }
 });
 
-test("face workflow recovery retains padding, restores the full frame and cannot bypass alignment failure", async () => {
+test("face workflow recovery keeps warning findings and cannot bypass encoding failure", async () => {
   const s = sandbox();
   try {
     recoveryStubs(s);
@@ -158,13 +158,14 @@ test("face workflow recovery retains padding, restores the full frame and cannot
     assert.equal(padded.status, 0, padded.stderr);
     const media = s.load("src/lib/engine/ffmpeg.ts");
     const calls = [];
-    let rejectAlignment = true;
+    let rejectEncoding = true;
     s.overrides.set("src/lib/engine/face-lipsync.ts", {
       restoreFaceLipsync: async () => {calls.push("restore"); return 3.9;},
-      finalizeFaceLipsync: async ({renderedPath, audioPath, outputPath}) => {
+      finalizeFaceLipsync: async ({renderedPath, audioPath, outputPath,onQualityWarnings}) => {
         assert.ok((await media.probeMedia(renderedPath)).durationSeconds > 3.8);
         calls.push("composite-and-align");
-        if (rejectAlignment) throw Object.assign(new Error("local timing mismatch"), {code: "LIPSYNC_ALIGNMENT"});
+        if (rejectEncoding) throw Object.assign(new Error("encode failed"), {code: "LIPSYNC_MEDIA"});
+        onQualityWarnings(["成片复核发现约 80 毫秒的音画偏移，请检查口型同步。"]);
         return media.finalizeVideo(video, audioPath, outputPath);
       },
     });
@@ -180,13 +181,16 @@ test("face workflow recovery retains padding, restores the full frame and cannot
       return Response.json({success: true, data: {pointsBalance: 940}});
     };
     const recover = s.load("src/lib/engine/recover-lipsync.ts").recoverStuckLipsyncTask;
-    await assert.rejects(recover(task.id, "fake"), /local timing mismatch/);
-    assert.equal(TaskStore.get(task.id).errorCode, "LIPSYNC_ALIGNMENT");
+    await assert.rejects(recover(task.id, "fake"), /encode failed/);
+    assert.equal(TaskStore.get(task.id).errorCode, "LIPSYNC_MEDIA");
     assert.equal(TaskStore.get(task.id).status, "failed");
     assert.equal(settlements.length, 0);
-    rejectAlignment = false;
+    rejectEncoding = false;
     const result = await recover(task.id, "fake");
     assert.equal(result.status, "completed");
+    assert.deepEqual(result.results.qualityWarnings,["成片复核发现约 80 毫秒的音画偏移，请检查口型同步。"]);
+    const evidence = JSON.parse(fs.readFileSync(result.results.evidenceJsonUrl,"utf8"));
+    assert.deepEqual(evidence.processing.quality_warnings,result.results.qualityWarnings);
     assert.deepEqual(calls, ["restore", "composite-and-align", "restore", "composite-and-align"]);
     assert.equal(settlements.length, 1);
     assert.equal(settlements[0].billableUnits, 3, "padding must not extend delivered speech billing");

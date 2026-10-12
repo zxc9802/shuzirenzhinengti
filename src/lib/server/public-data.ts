@@ -112,6 +112,8 @@ export function toPublicTask(task: TaskItem): PublicTaskItem {
       engine: toPublicEngine(provider),
     },
     results: {
+      qualityWarnings: task.results.qualityWarnings?.map(message =>
+        sanitizePublicText(message, "口型检测发现问题，请播放成片检查")),
       originalVideoUrl:
         task.inputs.videoPath || task.inputs.videoUrl || task.results.originalVideoUrl
           ? `${resultBase}/original`

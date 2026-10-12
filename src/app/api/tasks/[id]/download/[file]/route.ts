@@ -66,6 +66,7 @@ export async function GET(
             ? new Date(publicTask.updatedAt).toISOString()
             : undefined,
         status: publicTask.status,
+        qualityWarnings: publicTask.results.qualityWarnings,
         media: {
           videoDuration: publicTask.results.videoDuration,
           audioDuration: publicTask.results.audioDuration,

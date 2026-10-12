@@ -366,18 +366,35 @@ def choose_delay(rows):
     return float((max(delays) + min(delays)) / 2)
 
 
+def alignment_warnings(rows):
+    if not rows:
+        return ["没有足够的有效语音片段完成口型同步检测，请播放成片检查。"]
+    warnings = []
+    low = [r for r in rows if r["confidence"] < 3]
+    if low:
+        warnings.append(f"{len(low)} 个片段的口型同步检测置信度不足（最低 {min(r['confidence'] for r in low):.2f}），请检查口型。")
+    delays = [r["delayMs"] for r in rows]
+    if any(abs(delay) >= 200 for delay in delays):
+        warnings.append("部分片段的音画偏移达到检测范围边界（200 毫秒），实际偏移可能更大，请检查同步情况。")
+    if max(delays) - min(delays) > 40:
+        warnings.append(f"不同片段的音画偏移不一致（{min(delays)} 至 {max(delays)} 毫秒），请检查局部口型。")
+    return warnings
+
+
 def align(req):
     started = time.perf_counter()
     video, audio, output = req["videoPath"], req["audioPath"], req["outputPath"]
-    model = load_syncnet()
+    info = probe(video)
+    model, data = None, None
+    report = {"version": 1, "before": [], "warnings": []}
     try:
+        model = load_syncnet()
         manifest_path = Path(req["jobDir"]) / "face-manifest.json"
         if manifest_path.exists():
             # Prepare already checked every native source frame. Composite
             # preserves those frames and changes only the registered mouth.
             # Reuse their positions; both complete AV measurements still run.
             manifest = json.loads(manifest_path.read_text())
-            info = probe(video)
             data = np.array(manifest["track"], dtype=float)
             if (manifest["version"] != 1 or data.ndim != 2 or data.shape[1] != 14 or
                     not np.all(np.isfinite(data)) or len(data) < math.floor(info["duration"] * FPS) or
@@ -387,12 +404,13 @@ def align(req):
             data[:, 1::2] *= info["height"] / manifest["source"]["height"]
         else:
             info, data = track(video)
-    except QualityError as error:
-        raise QualityError(str(error), "LIPSYNC_ALIGNMENT") from error
-    report = {"version": 1, "before": sync_scores(video, audio, (info, data), model)}
+        report["before"] = sync_scores(video, audio, (info, data), model)
+        report["warnings"].extend(alignment_warnings(report["before"]))
+    except Exception:
+        report["warnings"].append("口型同步检测未完成，已按原始音画时间生成，请播放成片检查。")
     measured_before = time.perf_counter()
     (Path(req["jobDir"]) / "face-sync-report.json").write_text(json.dumps(report, indent=2))
-    delay = choose_delay(report["before"])
+    delay = choose_delay(report["before"]) if not report["warnings"] else 0
     # Never remove original narration to advance audio: hold the first video
     # frame instead. No speed changes, frame-by-frame time warp or spoken trim.
     video_pad, audio_pad = max(0, -delay / 1000), max(0, delay / 1000)
@@ -405,22 +423,30 @@ def align(req):
     after_info = probe(output)
     encoded = time.perf_counter()
     if (after_info["width"], after_info["height"]) != (info["width"], info["height"]):
-        raise QualityError("Encoded candidate changed frame geometry", "LIPSYNC_ALIGNMENT")
+        raise QualityError("Encoded candidate changed frame geometry", "LIPSYNC_MEDIA")
     # Encoding changes mouth pixels, not face position. Reuse the validated
     # full-clip track with the exact cloned-frame prefix; both SyncNet passes
     # still decode their own video/audio and measure every speech window.
-    padded_data = np.concatenate([np.repeat(data[:1], round(video_pad * FPS), axis=0), data])
-    report.update({"appliedDelayMs": delay, "after": sync_scores(output, output, (after_info, padded_data), model)})
+    report.update({"appliedDelayMs": delay, "after": []})
+    try:
+        if model is None or data is None:
+            raise QualityError("Alignment measurement unavailable", "LIPSYNC_ALIGNMENT")
+        padded_data = np.concatenate([np.repeat(data[:1], round(video_pad * FPS), axis=0), data])
+        report["after"] = sync_scores(output, output, (after_info, padded_data), model)
+        after_warnings = alignment_warnings(report["after"])
+        report["warnings"].extend(f"成片复核：{message}" for message in after_warnings)
+        if not after_warnings:
+            residual = choose_delay(report["after"])
+            if abs(residual) > 40:
+                report["warnings"].append(f"成片复核发现约 {abs(residual):g} 毫秒的音画偏移，请检查口型同步。")
+    except Exception:
+        report["warnings"].append("成片口型复核未完成，请播放成片检查同步情况。")
     measured_after = time.perf_counter()
     report["timingsSeconds"] = {"measureBefore": round(measured_before - started, 3),
                                "encode": round(encoded - measured_before, 3),
                                "measureAfter": round(measured_after - encoded, 3),
                                "total": round(measured_after - started, 3)}
     (Path(req["jobDir"]) / "face-sync-report.json").write_text(json.dumps(report, indent=2))
-    residual = choose_delay(report["after"])
-    if abs(residual) > 40:
-        Path(output).unlink(missing_ok=True)
-        raise QualityError("Alignment check failed after muxing", "LIPSYNC_ALIGNMENT")
     return report
 
 

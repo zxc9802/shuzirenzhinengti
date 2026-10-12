@@ -75,6 +75,7 @@ export interface TaskItem {
     lipsyncProvider?: LipsyncProvider;
   };
   results: {
+    qualityWarnings?: string[];
     originalVideoUrl?: string;
     finalVideoUrl?: string;
     exactAudioUrl?: string;
