@@ -134,15 +134,25 @@ def crop_plan(info, data):
         raise QualityError("Native face resolution is too small")
     left, top = data[:, :2].min(axis=0)
     right, bottom = (data[:, :2] + data[:, 2:4]).max(axis=0)
-    side = math.ceil(max(widths.max() * 3.5, heights.max() * 2.8,
-                         right - left + widths.max(), bottom - top + heights.max()) / 64) * 64
-    side = min(side, info["width"], info["height"])
-    x = int(np.clip((left + right - side) / 2, 0, info["width"] - side)) // 2 * 2
-    y = int(np.clip((top + bottom - side) / 2, 0, info["height"] - side)) // 2 * 2
-    out = min(768, side)
-    if left < x or right > x + side or top < y or bottom > y + side or widths.min() * out / side < 96:
-        raise QualityError("Face motion/resolution cannot fit a useful close-up")
-    return {"x": x, "y": y, "size": side, "outputSize": out}
+    attempted = set()
+    # Try distinct framing/scaling combinations before rejecting a usable face.
+    # Native detail still needs 80 pixels; enlargement is capped at 1.5x.
+    for context in [3.5, 3.25, 3, 2.75, 2.5, 2.25, 2, 1.75, 1.5]:
+        side = math.ceil(max(widths.max() * context, heights.max() * context * .8,
+                             right - left + widths.max(), bottom - top + heights.max()) / 64) * 64
+        side = min(side, info["width"], info["height"])
+        x = int(np.clip((left + right - side) / 2, 0, info["width"] - side)) // 2 * 2
+        y = int(np.clip((top + bottom - side) / 2, 0, info["height"] - side)) // 2 * 2
+        for scale in [1, 1.125, 1.25, 1.375, 1.5]:
+            out = min(768, side) if scale == 1 else min(768, math.ceil(side * scale / 64) * 64,
+                                                                      math.floor(side * 1.5 / 2) * 2)
+            candidate = (x, y, side, out)
+            if candidate in attempted:
+                continue
+            attempted.add(candidate)
+            if left >= x and right <= x + side and top >= y and bottom <= y + side and widths.min() * out / side >= 96:
+                return {"x": x, "y": y, "size": side, "outputSize": out, "attemptCount": len(attempted)}
+    raise QualityError("Face motion/resolution cannot fit a useful close-up")
 
 
 def pad_audio(source, target):
@@ -187,22 +197,42 @@ def prepare(req):
     return {"durationSeconds": duration + PREPAD + POSTPAD, "crop": crop}
 
 
-def frame_offset(source, rendered, prepad_frames):
-    ids = np.arange(3, min(len(source) - 3, len(rendered) - prepad_frames - 3))
-    if len(ids) < 12:
+def frame_offset(source, rendered, prepad_frames, frame_count=None, diagnostics=None):
+    count = len(source) if frame_count is None else frame_count
+    ids = np.arange(count)
+    if count < 12 or count > len(source):
         raise QualityError("Too few frames for registration", "LIPSYNC_MEDIA")
-    if np.std(source[ids], axis=0).mean() < 0.5:
-        return 0  # Static background cannot identify a temporal shift.
-    distances = np.stack([np.mean((source[ids] - rendered[ids + prepad_frames + offset]) ** 2, axis=(1, 2, 3))
-                          for offset in range(-3, 4)], axis=1)
-    # Compression/resizing can swap two adjacent per-frame nearest matches.
-    # Compare one-second blocks, then apply ONE offset to the entire clip.
-    blocks = [int(distances[i:i + FPS].mean(axis=0).argmin())
-              for i in range(0, len(ids) - 11, FPS)]
-    best = int(distances.mean(axis=0).argmin())
-    if best in (0, 6) or max(blocks) - min(blocks) > 1:
-        raise QualityError("Provider frame correspondence is not stable", "LIPSYNC_MEDIA")
-    return best - 3
+    windows = [ids[start:min(start + FPS, count)] for start in range(0, count, FPS)]
+    if len(windows[-1]) < 12:
+        windows[-1] = ids[max(0, count - FPS):]
+    # Held frames and nearly static compression noise cannot identify a shift.
+    # They must not outvote moving sections or produce random edge matches.
+    moving = [window for window in windows if np.std(source[window], axis=0).mean() >= .5]
+    if diagnostics is not None:
+        diagnostics.update(stationaryBlocks=len(windows) - len(moving), searchAttempts=0, candidateCount=0)
+    if not moving:
+        return 0
+    active = np.unique(np.concatenate(moving))
+    bounds, attempted = set(), set()
+    for radius in [3, 6, 12, 24, 48]:
+        low = max(-radius, -prepad_frames)
+        high = min(radius, len(rendered) - prepad_frames - count)
+        if low > high or (low, high) in bounds:
+            continue
+        bounds.add((low, high))
+        offsets = list(range(low, high + 1))
+        attempted.update(offsets)
+        distances = np.stack([np.mean((source[ids] - rendered[ids + prepad_frames + offset]) ** 2,
+                                      axis=tuple(range(1, source.ndim))) for offset in offsets], axis=1)
+        blocks = [offsets[int(distances[window].mean(axis=0).argmin())] for window in moving]
+        best = offsets[int(distances[active].mean(axis=0).argmin())]
+        if diagnostics is not None:
+            diagnostics.update(searchAttempts=len(bounds), candidateCount=len(attempted))
+        # Expand the search rather than accepting a boundary result. Every
+        # candidate covers the same full source timeline, including its ends.
+        if abs(best) < radius and max(blocks) - min(blocks) <= 1:
+            return best
+    raise QualityError("Provider frame correspondence is not stable", "LIPSYNC_MEDIA")
 
 
 def blend_mouth(frame, patch, x, y, cx, cy, rx, ry):
@@ -248,8 +278,11 @@ def composite(req):
                                             extra=f"crop={w}:{h // 4}:{x}:{y}")), dtype=np.float32)
     rendered_thumbs = np.array(list(frames(req["renderedPath"], 32, 12,
                                           extra="crop=iw:ih/4:0:0")), dtype=np.float32)
-    offset = frame_offset(source_thumbs, rendered_thumbs, round(PREPAD * FPS))
-    (job / "face-registration.json").write_text(json.dumps({"fixedFrameOffset": offset}))
+    registration = {}
+    offset = frame_offset(source_thumbs, rendered_thumbs, round(PREPAD * FPS),
+                          math.floor(manifest["durationSeconds"] * FPS), registration)
+    registration["fixedFrameOffset"] = offset
+    (job / "face-registration.json").write_text(json.dumps(registration))
     patches = frames(req["renderedPath"], w, h, extra=f"trim=start={PREPAD + offset / FPS},setpts=PTS-STARTPTS")
     encoder = sp.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s",
                         f"{base['width']}x{base['height']}", "-r", str(FPS), "-i", "-", "-an", "-c:v", "libx264",
@@ -275,7 +308,7 @@ def composite(req):
             raise QualityError("Composite encode failed", "LIPSYNC_MEDIA")
     if count < math.floor(manifest["durationSeconds"] * FPS):
         raise QualityError("Composite was truncated", "LIPSYNC_MEDIA")
-    return {"frames": count, "elapsedSeconds": round(time.perf_counter() - started, 3)}
+    return {"frames": count, "elapsedSeconds": round(time.perf_counter() - started, 3), "registration": registration}
 
 
 def load_syncnet():

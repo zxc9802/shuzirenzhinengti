@@ -329,6 +329,7 @@ async function runPipeline(taskId: string, sessionToken?: string): Promise<void>
         durationSeconds: ttsResult.selectedDuration,
         jobDir,
         taskId,
+        onLog: (message) => { ensureTaskActive(); log(message); },
       });
       ensureTaskActive();
       providerVideoPath = faceInputs.videoPath;

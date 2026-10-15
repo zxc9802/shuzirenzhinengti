@@ -40,8 +40,12 @@ export async function prepareFaceLipsync(params: {
   durationSeconds: number;
   jobDir: string;
   taskId: string;
+  onLog?: (message: string) => void;
 }) {
   const result = await runWorker("prepare", params, params.jobDir);
+  if (result.crop?.attemptCount > 1) {
+    params.onLog?.(`已自动调整人脸近景（尝试 ${result.crop.attemptCount} 种方案），继续生成`);
+  }
   // Persist the coordinate/time mapping and base picture before a paid job can
   // start. Recovery must never treat the provider's face crop as a final video.
   if (CosService.isConfigured()) {
@@ -99,6 +103,9 @@ export async function finalizeFaceLipsync(params: {
   const candidate = path.join(params.jobDir, "face-final-candidate.mp4");
   try {
     const composite = await runWorker("composite", params, params.jobDir);
+    if (composite.registration?.searchAttempts > 1 || composite.registration?.stationaryBlocks > 0) {
+      params.onLog?.("已自动调整画面对齐，继续合成成片");
+    }
     params.onLog?.(`嘴部合成完成，用时 ${composite.elapsedSeconds} 秒，正在校准配音时间...`);
     const alignment = await runWorker("align", {
       ...params,

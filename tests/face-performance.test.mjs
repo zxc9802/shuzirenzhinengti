@@ -44,6 +44,25 @@ test('recovery uploads overlap and all in-flight writes finish before a failure 
   }
 });
 
+test('successful crop adjustment continues once and reports progress without an error', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'face-adjust-'));
+  const logs = [];
+  let calls = 0;
+  const api = load({isConfigured:()=>false}, {execMediaCommand: async ()=> {
+    calls++;
+    return JSON.stringify({durationSeconds:6.09, crop:{attemptCount:2}});
+  }});
+  try {
+    const result = await api.prepareFaceLipsync({inputVideoPath:'video.mp4', audioPath:'voice.wav',
+      durationSeconds:5.19, jobDir:dir, taskId:'test-task', onLog:message=>logs.push(message)});
+    assert.equal(result.durationSeconds,6.09);
+    assert.equal(calls,1,'candidate adjustment must reuse the same local face analysis');
+    assert.ok(logs.some(message=>message.includes('自动调整')));
+    assert.equal(logs.some(message=>/失败|错误/.test(message)),false);
+    assert.equal(fs.existsSync(path.join(dir,'face-prepare-request.json')),false);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 test('final video keeps quality warnings and still rejects an encoding failure', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'face-final-'));
   let fail = true; const operations = []; const logs = []; const warningReports = [];

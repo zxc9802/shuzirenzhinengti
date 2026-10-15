@@ -301,6 +301,17 @@ class FaceWorkflowTests(unittest.TestCase):
         with self.assertRaises(QualityError):
             crop_plan({"width": 2160, "height": 3840}, np.array([[1000, 1400, 40, 55]], dtype=float))
 
+    def test_crop_retries_bounded_scaling_for_a_valid_native_face(self):
+        data = np.array([[304, 409, 91.7, 122.6], [350, 430, 111, 155]], dtype=float)
+        result = crop_plan({"width": 720, "height": 1280}, data)
+        self.assertGreaterEqual(91.7 * result["outputSize"] / result["size"], 96)
+        self.assertLessEqual(result["outputSize"] / result["size"], 1.5)
+        self.assertGreater(result["attemptCount"], 1)
+        self.assertLessEqual(result["attemptCount"], 45)
+        self.assertLessEqual(result["x"], 304)
+        self.assertGreaterEqual(result["x"] + result["size"], 461)
+        self.assertGreaterEqual(result["y"] + result["size"], 585)
+
     def test_alignment_uses_measured_delay_in_either_direction(self):
         for value in [-120, 0, 80]:
             self.assertEqual(choose_delay([{"delayMs": value, "confidence": 5}] * 3), value)
@@ -316,6 +327,38 @@ class FaceWorkflowTests(unittest.TestCase):
         warped = np.concatenate([np.repeat(source[:1], 18, axis=0), source[:50], source[52:], np.repeat(source[-1:], 11, axis=0)])
         with self.assertRaises(QualityError):
             frame_offset(source, warped, 18)
+
+    def test_held_ending_does_not_turn_a_correct_registration_into_an_error(self):
+        moving = np.random.default_rng(82).uniform(0, 255, (120, 12, 32, 3)).astype(np.float32)
+        source = np.concatenate([moving, np.repeat(moving[-1:], 90, axis=0)])
+        rendered = np.concatenate([np.repeat(source[:1], 18, axis=0), source, np.repeat(source[-1:], 9, axis=0)])
+        self.assertEqual(frame_offset(source, rendered, 18), 0)
+
+    def test_registration_expands_search_instead_of_repeating_the_same_three_frames(self):
+        source = np.random.default_rng(83).uniform(0, 255, (140, 12, 32, 3)).astype(np.float32)
+        for delay in [-8, 8, 16]:
+            with self.subTest(delay=delay):
+                rendered = np.concatenate([np.repeat(source[:1], 18 + delay, axis=0), source,
+                                           np.repeat(source[-1:], 9, axis=0)])
+                self.assertEqual(frame_offset(source, rendered, 18), delay)
+
+    def test_larger_search_does_not_discard_a_moving_section_near_the_end(self):
+        source = np.random.default_rng(84).uniform(0, 255, (140, 12, 32, 3)).astype(np.float32)
+        rendered = np.concatenate([np.repeat(source[:1], 18, axis=0), source[:90], source[92:],
+                                   np.repeat(source[-1:], 11, axis=0)])
+        with self.assertRaises(QualityError):
+            frame_offset(source, rendered, 18)
+
+    def test_registration_keeps_the_last_source_frame_when_provider_has_no_spare_tail(self):
+        source = np.random.default_rng(85).uniform(0, 255, (100, 12, 32, 3)).astype(np.float32)
+        rendered = np.concatenate([np.repeat(source[:1], 18, axis=0), source])
+        self.assertEqual(frame_offset(source, rendered, 18), 0)
+
+    def test_shortened_reference_is_not_silently_treated_as_a_complete_timeline(self):
+        source = np.random.default_rng(86).uniform(0, 255, (80, 12, 32, 3)).astype(np.float32)
+        rendered = np.concatenate([np.repeat(source[:1], 18, axis=0), source, np.repeat(source[-1:], 30, axis=0)])
+        with self.assertRaises(QualityError):
+            frame_offset(source, rendered, 18, frame_count=100)
 
     def test_local_speed_mismatch_and_uncertain_match_are_not_global_offsets(self):
         for rows in [[], [{"delayMs": 0, "confidence": 1}],
