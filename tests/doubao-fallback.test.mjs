@@ -50,17 +50,21 @@ async function harness(run) {
     const primary = load('../src/lib/engine/indextts.ts', {fs, path, crypto,
       './ffmpeg': media, './speech-stitch': stitch, './doubao-tts': doubao,
       '../server/safe-log': {logServerError() {}},
-      '../server/outbound-url-policy': {providerUrlPolicy: () => ({})},
+      '../server/outbound-url-policy': {providerUrlPolicy: () => ({}),
+        fetchWithOutboundUrlPolicy: (url, init) => globalThis.fetch(url, init),
+        assertSameOrigin: (url, base) => assert.equal(new URL(url).origin, new URL(base).origin)},
       './download-file': {downloadFileToDisk: async ({outputPath}) => fs.copyFileSync(fixture, outputPath)},
     });
     globalThis.fetch = async (url, init) => {
       if (init?.method === 'POST') {
         const payload = JSON.parse(init.body); posts.push({url: String(url), payload, init});
         if (String(url).includes('openspeech.bytedance.com')) return fallbackResponse();
-        if (failPrimary && payload.text.includes('失败')) return Response.json({error: '服务器繁忙'}, {status: 500});
-        return Response.json({task_id: String(posts.length)});
+        if (failPrimary && payload.prompt.includes('失败')) return Response.json({error: '服务器繁忙'}, {status: 500});
+        const responseUrl = `https://queue.fal.run/fal-ai/index-tts-2/requests/${posts.length}`;
+        return Response.json({request_id: String(posts.length), status_url: `${responseUrl}/status`, response_url: responseUrl});
       }
-      return Response.json({state: 'SUCCESS', audio_url: 'https://audio.example.test/test.wav'});
+      if (String(url).endsWith('/status')) return Response.json({status: 'COMPLETED'});
+      return Response.json({audio: {url: 'https://audio.example.test/test.wav'}});
     };
     const options = {apiKey: 'primary-test', speakerAudioUrl: 'https://speaker.example.test/a.wav',
       cacheScope: `test:${dir}`, outDir: path.join(dir, 'job'), onLog: message => logs.push(message),

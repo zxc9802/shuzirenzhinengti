@@ -22,7 +22,9 @@ async function harness(run) {
     const joins = [];
     const deps = {fs, path, crypto, './ffmpeg': media,
       '../server/safe-log': {logServerError() {}},
-      '../server/outbound-url-policy': {providerUrlPolicy: () => ({})},
+      '../server/outbound-url-policy': {providerUrlPolicy: () => ({}),
+        fetchWithOutboundUrlPolicy: (url, init) => globalThis.fetch(url, init),
+        assertSameOrigin: (url, base) => assert.equal(new URL(url).origin, new URL(base).origin)},
       './download-file': {downloadFileToDisk: async ({outputPath}) => fs.copyFileSync(fixture, outputPath)},
       './speech-stitch': {...stitch, stitchSpeechSegments: async (parts, output) => {
         joins.push(parts.map(part => part.text));
@@ -42,13 +44,15 @@ async function harness(run) {
         requests.push({id, payload, ready, release});
         active++; maximum = Math.max(maximum, active);
         if (autoComplete) release();
-        return Response.json({task_id:id});
+        const responseUrl = `https://queue.fal.run/fal-ai/index-tts-2/requests/${id}`;
+        return Response.json({request_id: id, response_url: responseUrl, status_url: `${responseUrl}/status`});
       }
-      const request = requests[Number(new URL(url).searchParams.get('task_id'))];
+      const request = requests[Number(String(url).match(/\/requests\/(\d+)/)[1])];
       await request.ready;
+      if (String(url).endsWith('/status')) return Response.json({status: 'COMPLETED'});
       active--;
-      if (request.payload.text === failText) return Response.json({state:'FAILURE'});
-      return Response.json({state:'SUCCESS', audio_url:`https://audio.example.test/${request.id}`});
+      if (request.payload.prompt === failText) return Response.json({detail: '合成失败'}, {status: 500});
+      return Response.json({audio: {url: `https://audio.example.test/${request.id}`}});
     };
     const module = {exports:{}};
     new Function('require', 'module', 'exports', 'setTimeout', compiled)(name => {

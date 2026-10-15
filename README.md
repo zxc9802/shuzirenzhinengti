@@ -15,7 +15,7 @@
   - 支持工具发现与调试：`heygen_create_lipsync`、`heygen_get_lipsync`、`heygen_list_lipsyncs`。
   - 严格契约约束：固定 `precision` 模式、关闭背景乐/水印/动态时长，保障口型精细度与任务幂等防重复扣费。
 - **🎙️ IndexTTS-2 语音克隆与音轨无损重混**：
-  - 基于 302.AI IndexTTS-2 生成高质量中文定制配音。
+  - 基于 fal.ai IndexTTS-2 生成高质量中文定制配音。
   - 嘴部同步完成后，自动用原始生成的 IndexTTS-2 WAV 重新封装，保证交付成片音质纯正。
 - **📊 左右分屏对比与证据链交付**：
   - 原视频 vs 对口型成片左右分屏同步播放。
@@ -35,7 +35,7 @@
    打开浏览器访问 [http://localhost:3000](http://localhost:3000)。
 
 3. **系统配置**：
-   进入 **「系统配置」** (`/settings`) 页面填入您的 `302.AI API Key`、音色参考直链及 `HeyGen API Key` 即可开始使用。
+   在服务端 `.env.local` 中配置 `FAL_KEY`、音色参考直链 `INDEXTTS_SPEAKER_AUDIO_URL`，以及所选对口型引擎的密钥；可用 `INDEXTTS_EMOTION_AUDIO_URL` 设置独立情绪参考。配音调用 fal.ai 的 `fal-ai/index-tts-2/text-to-speech`。
 
 ## 数字人动效（独立模块）
 

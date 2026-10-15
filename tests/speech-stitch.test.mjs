@@ -99,8 +99,13 @@ test("IndexTTS actually submits sentence requests, stitches all parts, ignores o
     } }).outputText;
     const deps = { fs, path, crypto, './ffmpeg': media,
       '../server/safe-log': { logServerError() {} },
-      '../server/outbound-url-policy': { providerUrlPolicy: () => ({}) },
-      './download-file': { downloadFileToDisk: async ({ url, outputPath }) => {
+      '../server/outbound-url-policy': {
+        providerUrlPolicy: provider => ({ name: provider }),
+        fetchWithOutboundUrlPolicy: (url, init) => globalThis.fetch(url, init),
+        assertSameOrigin: (url, base) => assert.equal(new URL(url).origin, new URL(base).origin),
+      },
+      './download-file': { downloadFileToDisk: async ({ url, outputPath, urlPolicy }) => {
+        assert.equal(urlPolicy.name, 'fal');
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         fs.copyFileSync(url.endsWith('/1') ? first : second, outputPath);
       } },
@@ -108,12 +113,16 @@ test("IndexTTS actually submits sentence requests, stitches all parts, ignores o
     // Only the new implementation needs this dependency; the old path can still run and fail the assertion.
     if (fs.existsSync(new URL('../src/lib/engine/speech-stitch.ts', import.meta.url))) deps['./speech-stitch'] = await stitchModule();
     globalThis.fetch = async (url, init) => {
+      assert.equal(new URL(url).origin, 'https://queue.fal.run');
+      assert.equal(init.headers.Authorization, 'Key test-only');
       if (init?.method === 'POST') {
         calls.push(JSON.parse(init.body));
         if (failSecond && calls.length === 2) return Response.json({ error: 'failed' }, { status: 503 });
-        return Response.json({ task_id: String(calls.length) });
+        const responseUrl = `https://queue.fal.run/fal-ai/index-tts-2/requests/${calls.length}`;
+        return Response.json({ request_id: String(calls.length), response_url: responseUrl, status_url: `${responseUrl}/status` });
       }
-      return Response.json({ state: 'SUCCESS', audio_url: `https://audio.example.test/${new URL(url).searchParams.get('task_id')}` });
+      if (url.endsWith('/status')) return Response.json({ status: 'COMPLETED' });
+      return Response.json({ audio: { url: `https://audio.example.test/${url.split('/').at(-1)}` } });
     };
     const module = { exports: {} };
     new Function('require', 'module', 'exports', 'setTimeout', compiled)(name => {
@@ -126,11 +135,13 @@ test("IndexTTS actually submits sentence requests, stitches all parts, ignores o
     fs.copyFileSync(first, path.join(legacyDir, 'voice-raw.wav'));
     fs.copyFileSync(first, path.join(legacyDir, 'voice-track.wav'));
     fs.writeFileSync(path.join(legacyDir, 'meta.json'), JSON.stringify({ selectedDuration: 2, rawDuration: 2, rate: 1, toneProfile: 'low' }));
+    const oldSegmentKey = crypto.createHash('sha256').update(`sentence-stitch-v1|owner|${text}|https://speaker.example.test/a.wav||0.8|low`).digest('hex');
+    fs.cpSync(legacyDir, path.join(dir, '.runtime', 'tts-cache', oldSegmentKey), { recursive: true });
     const options = { apiKey: 'test-only', speakerAudioUrl: 'https://speaker.example.test/a.wav', cacheScope: 'owner', outDir: path.join(dir, 'job') };
     const result = await module.exports.generateIndexTTS(text, options);
     assert.equal(result.fromCache, false, 'old whole-text cache must not mask the new feature');
-    assert.deepEqual(calls.map(call => call.text), ['房间通透明亮。', '床品温馨舒适。']);
-    assert.ok(calls.every(call => call.speaker_audio_url === options.speakerAudioUrl));
+    assert.deepEqual(calls.map(call => call.prompt), ['房间通透明亮。', '床品温馨舒适。']);
+    assert.ok(calls.every(call => call.audio_url === options.speakerAudioUrl));
     assert.equal(result.audioUrl, undefined, 'a provider URL for one part is not the joined output');
     const samples = decode(result.finalWavPath);
     assert.ok(samples.length / 22050 > 1.4 && samples.length / 22050 < 1.7);

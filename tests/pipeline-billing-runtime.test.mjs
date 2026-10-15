@@ -64,8 +64,9 @@ test("pipeline checks real duration before paid lipsync, preserves refunds and s
       const deps = {
         path, fs, crypto, "../server/safe-log": safeLog, "./task-execution": taskExecution,
         "../store/task-store": {TaskStore},
-        "../config": {getAppConfig: () => ({storageDir: path.join(tmp, "jobs"), publicBaseUrl: "https://media.example.test", indexttsSpeakerAudioUrl: speaker})},
+        "../config": {getAppConfig: () => ({storageDir: path.join(tmp, "jobs"), publicBaseUrl: "https://media.example.test", indexttsSpeakerAudioUrl: speaker, falApiKey: "test-fal-only", indexttsApiKey: "legacy-302-only"})},
         "./indextts": {generateIndexTTS: async (_text, options) => {
+          assert.equal(options.apiKey, "test-fal-only", "speech must use the fal key rather than the legacy 302 key");
           events.push({stage: "tts"});
           const wav = path.join(options.outDir, "voice-track.wav"); fs.writeFileSync(wav, "fixture");
           if (audioOnly) {
