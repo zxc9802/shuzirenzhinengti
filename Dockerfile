@@ -51,7 +51,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src ./src
 
-RUN npx remotion browser ensure
+# Remotion 4.0.524 uses this Chrome version. An explicit version selects Google's CDN.
+RUN node --input-type=module -e "import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser({onBrowserDownload: () => ({version: '149.0.7790.0', onProgress: () => {}})});"
 
 # Create private runtime directories
 RUN mkdir -p /app/.runtime/jobs /app/.runtime/uploads /app/.runtime/provider-input
